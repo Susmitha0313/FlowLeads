@@ -60,30 +60,37 @@
 export function generateVCF(profile) {
   console.log(`[VCF:generateVCF] Building vCard for "${profile.name}"...`);
 
-  const name = profile.name || '';
-  const [firstName = '', lastName = ''] = name.split(' ');
+  const name = (profile.name || '').trim();
+  const parts = name.split(/\s+/);
+  const firstName = parts[0] || '';
+  const lastName = parts.slice(1).join(' ');
 
   const lines = [
     'BEGIN:VCARD',
     'VERSION:3.0',
-
-    // REQUIRED
     `FN:${name}`,
     `N:${lastName};${firstName};;;`,
   ];
 
-  if (profile.phones?.length) {
-    lines.push(`TEL;TYPE=CELL:+${profile.phones[0]}`);
-  }
+  if (profile.designation) lines.push(`TITLE:${profile.designation}`);
+  if (profile.company)     lines.push(`ORG:${profile.company}`);
 
-  if (profile.emails?.length) {
-    lines.push(`EMAIL:${profile.emails[0]}`);
-  }
+  (profile.emails || []).forEach(email => {
+    lines.push(`EMAIL;TYPE=INTERNET:${email}`);
+  });
 
-  // VERY IMPORTANT
+  (profile.phones || []).forEach(phone => {
+    // normalise: strip non-digits then re-add + prefix
+    const digits = phone.replace(/\D/g, '');
+    lines.push(`TEL;TYPE=CELL:+${digits}`);
+  });
+
+  if (profile.profileUrl) lines.push(`URL:${profile.profileUrl}`);
+
   lines.push('END:VCARD');
 
-  const vcf = lines.join('\r\n');
+  // vCard spec requires CRLF line endings AND a trailing CRLF
+  const vcf = lines.join('\r\n') + '\r\n';
 
   console.log(`[VCF:generateVCF] ✓ vCard generated`);
   console.log(vcf);

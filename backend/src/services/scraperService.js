@@ -30,8 +30,8 @@ class LinkedInScraper {
     }
 
     this.browser = await chromium.launch({
-      headless: false, //change to true
-      channel: 'chrome', //remove this 
+      headless: true, //change to true
+      // channel: 'chrome', //remove this 
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
     console.log('[SCRAPER:init] ✓ Browser launched');
@@ -156,9 +156,18 @@ class LinkedInScraper {
         await page.close();
         return this.scrapeProfile(profileUrl);
       }
-      console.log('[SCRAPER:scrapeProfile] Waiting for <h1> to confirm profile loaded...');
+      console.log('[SCRAPER:scrapeProfile] Waiting for profile h1 to confirm page is fully loaded...');
       await page.waitForSelector('main', { timeout: 30000 });
       console.log('[SCRAPER:scrapeProfile] ✓ <main> found — page is a profile');
+
+      // Scroll down to trigger lazy-loaded sections (experience, contact link, etc.) //whole section new , was not before
+      // console.log('[SCRAPER:scrapeProfile] Scrolling to trigger lazy-loaded sections...');
+      // await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+      // await page.waitForTimeout(1500);
+      // await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      // await page.waitForTimeout(1500);
+      // await page.evaluate(() => window.scrollTo(0, 0));
+      // await page.waitForTimeout(500);
 
       console.log('[SCRAPER:scrapeProfile] Extracting basic info...');
       const basicInfo = await this._extractBasicInfo(page);
@@ -261,6 +270,7 @@ class LinkedInScraper {
 
       const contactData = await page.evaluate(() => {
         const emails = [], phones = [], websites = [];
+
         const blocks = document.querySelectorAll('div');
         blocks.forEach(block => {
           const label = block.querySelector('p')?.innerText?.trim();
@@ -315,8 +325,12 @@ class LinkedInScraper {
   }
 
   async _extractExperience(page) {
-    console.log('[SCRAPER:_extractExperience] Extracting experience section...');
+    console.log('[SCRAPER:_extractExperience] Waiting for experience section...');
     try {
+      // Wait for experience section to be present (lazy-loaded)
+      await page.waitForSelector('#experience', { timeout: 10000 }).catch(() => {
+        console.warn('[SCRAPER:_extractExperience] ⚠ #experience section not found within timeout — proceeding anyway');
+      });
       const result = await page.evaluate(() => {
         let company = '', designation = '';
         const expSection = document.querySelector('#experience');
@@ -379,11 +393,22 @@ class LinkedInScraper {
 
   normalizeUrl(url) {
     let normalized = url.trim().replace('://m.linkedin', '://www.linkedin');
-    normalized = normalized.split('?')[0].split('#')[0];
-    if (!normalized.startsWith('http')) normalized = 'https://' + normalized;
-    if (!normalized.endsWith('/')) normalized += '/';
-    console.log(`[SCRAPER:normalizeUrl] "${url}" → "${normalized}"`);
-    return normalized;
+    if (!normalized.startsWith('http')) {
+      normalized = 'https://' + normalized
+    };
+    const parsed = new URL(normalized);
+
+    let pathname = parsed.pathname.split('?')[0].split('#')[0];
+    const parts = pathname.split('/').filter(Boolean);
+    // Handle LinkedIn profile URLs
+    if (parsed.hostname.includes('linkedin.com')) {
+      if (parts[0] === 'in' && parts[1]) {
+        pathname = `/in/${parts[1]}/`;
+      }
+    }
+    const finalUrl = `${parsed.origin}${pathname}`;
+    console.log(`[SCRAPER:normalizeUrl] "${url}" → "${finalUrl}"`);
+    return finalUrl;
   }
 
   async close() {

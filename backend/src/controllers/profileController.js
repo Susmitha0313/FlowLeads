@@ -21,23 +21,33 @@ export const extractProfile = async (req, res) => {
 
   try {
     const normalizedUrl = scraperService.normalizeUrl(url);
-
-    console.log('[CTRL:extractProfile] Checking DB cache...');
-    const cached = await Profile.findOne({ profileUrl: normalizedUrl });
-    if (cached) {
-      console.log(`[CTRL:extractProfile] ✓ Cache hit — id: ${cached._id}, name: "${cached.name}"`);
-      return res.json({ profile: cached, cached: true });
+console.log(`[CTRL:extractProfile] Normalized URL: "${normalizedUrl}"`);
+  if (!normalizedUrl.includes('linkedin.com/in/')) {
+      return res.status(400).json({ error: 'Invalid LinkedIn profile URL' });
     }
-    console.log('[CTRL:extractProfile] Cache miss — handing off to scraperService');
 
+    // console.log('[CTRL:extractProfile] Checking DB cache...');
+    // const cached = await Profile.findOne({ profileUrl: normalizedUrl });
+    // if (cached) {
+    //   console.log(`[CTRL:extractProfile] ✓ Cache hit — id: ${cached._id}, name: "${cached.name}"`);
+    //   return res.json({ profile: cached, cached: true });
+    // }
+    // console.log('[CTRL:extractProfile] Cache miss — handing off to scraperService');
+
+    console.log('[CTRL:extractProfile] Scraping fresh data...');
     const scrapeStart = Date.now();
-    const data = await scraperService.scrapeProfile(url);
+    const data = await scraperService.scrapeProfile(normalizedUrl);
     console.log(`[CTRL:extractProfile] ✓ Scrape returned in ${Date.now() - scrapeStart}ms`);
     console.log(`[CTRL:extractProfile] Scraped data summary — name: "${data.name}", emails: ${data.emails?.length ?? 0}, phones: ${data.phones?.length ?? 0}`);
 
     console.log('[CTRL:extractProfile] Saving to MongoDB...');
-    const profile = new Profile(data);
-    await profile.save();
+    // const profile = new Profile(data);
+    // await profile.save();
+     const profile = await Profile.findOneAndUpdate(
+      { profileUrl: normalizedUrl },
+      { ...data, profileUrl: normalizedUrl },
+      { new: true, upsert: true }
+    );
     console.log(`[CTRL:extractProfile] ✓ Saved — id: ${profile._id}`);
 
     res.json({ profile, cached: false });

@@ -14,17 +14,18 @@ import {
 import { extractProfile, downloadContact, exportProfiles } from '../src/services/api';
 import ProfileCard, { Profile } from '../src/components/ProfileCard';
 import { saveFileFromUrl } from '../src/utils/saveFile';
-import { BASE_URL } from '../src/services/api';
 
 type State = 'idle' | 'loading' | 'success' | 'error';
-
 export default function HomeScreen() {
   const [url, setUrl] = useState('');
+  const baseUrl = process.env.EXPO_PUBLIC_API_URL;
+
   const [state, setState] = useState<State>('idle');
   const [profile, setProfile] = useState<Profile | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+
 
   const handleExtract = async () => {
     const trimmed = url.trim();
@@ -58,7 +59,7 @@ export default function HomeScreen() {
     try {
       const filename = `${(profile.name ?? 'contact').replace(/\s+/g, '_')}.vcf`;
       await saveFileFromUrl(
-        `${BASE_URL}/profiles/${profile._id}/contact`,
+        `${baseUrl}/profiles/${profile._id}/contact`,
         filename,
         'text/vcard'
       );
@@ -73,7 +74,7 @@ export default function HomeScreen() {
     setExporting(true);
     try {
       await saveFileFromUrl(
-        `${BASE_URL}/profiles/export`,
+        `${baseUrl}/profiles/export`,
         'linkedin-contacts.xlsx',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       );
@@ -132,11 +133,10 @@ export default function HomeScreen() {
           <TouchableOpacity
             onPress={handleExtract}
             disabled={state === 'loading' || !url.trim()}
-            className={`mt-4 rounded-2xl py-3.5 items-center justify-center ${
-              state === 'loading' || !url.trim()
+            className={`mt-4 rounded-2xl py-3.5 items-center justify-center ${state === 'loading' || !url.trim()
                 ? 'bg-blue-300'
                 : 'bg-[#0A66C2]'
-            }`}
+              }`}
           >
             {state === 'loading' ? (
               <View className="flex-row items-center gap-x-2">
