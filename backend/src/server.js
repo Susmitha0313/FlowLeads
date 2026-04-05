@@ -5,12 +5,6 @@ import { connectDB } from './config/db.js';
 import profileRoutes from './routes/profileRoutes.js';
 
 dotenv.config();
-console.log('[SERVER] Environment loaded');
-console.log(`[SERVER] NODE_ENV: ${process.env.NODE_ENV}`);
-console.log(`[SERVER] PORT: ${process.env.PORT || 3000}`);
-console.log(`[SERVER] LINKEDIN_EMAIL set: ${!!process.env.LINKEDIN_EMAIL}`);
-console.log(`[SERVER] LINKEDIN_PASSWORD set: ${!!process.env.LINKEDIN_PASSWORD}`);
-console.log(`[SERVER] MONGO_URL set: ${!!process.env.MONGO_URL}`);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,6 +22,9 @@ console.log('[SERVER] Registering routes under /api...');
 app.use('/api', profileRoutes);
 console.log('[SERVER] ✓ Routes registered');
 
+app.get('/', (req, res) => {
+  res.send('API is running 🚀');
+});
 connectDB();
 
 app.listen(PORT, () => {
