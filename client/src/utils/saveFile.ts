@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { Linking, Platform } from 'react-native';
+import { Platform } from 'react-native';
 
 export async function saveFileFromUrl(
   url: string,
@@ -8,23 +8,33 @@ export async function saveFileFromUrl(
   mimeType: string
 ): Promise<void> {
   const fileUri = FileSystem.cacheDirectory + filename;
-
   await FileSystem.downloadAsync(url, fileUri);
-  const fileInfo = await FileSystem.getInfoAsync(fileUri);
-  console.log(fileInfo);
-  // On Android with a .vcf, convert to content:// URI and open directly
-  // so Android routes it straight to the Contacts app
-  if (Platform.OS === 'android' && mimeType === 'text/vcard') {
-    const contentUri = await FileSystem.getContentUriAsync(fileUri);
-    const content = await FileSystem.readAsStringAsync(fileUri);
-    console.log(content.slice(0, 200));
-    await Linking.openURL(contentUri);
-    return;
+
+  if (Platform.OS === 'android') {
+    // Ask the user to pick a folder, then write the file there
+    const permissions =
+      await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+
+    if (permissions.granted) {
+      const content = await FileSystem.readAsStringAsync(fileUri);
+      const destUri = await FileSystem.StorageAccessFramework.createFileAsync(
+        permissions.directoryUri,
+        filename,
+        mimeType
+      );
+      await FileSystem.writeAsStringAsync(destUri, content);
+      return;
+    }
+    // User denied folder picker — fall back to share sheet
   }
 
-  // iOS / other file types — use share sheet
+  // iOS or Android fallback: share sheet
   const canShare = await Sharing.isAvailableAsync();
   if (!canShare) throw new Error('Sharing is not available on this device');
 
-  await Sharing.shareAsync(fileUri, { mimeType, dialogTitle: `Save ${filename}` });
+  await Sharing.shareAsync(fileUri, {
+    mimeType,
+    dialogTitle: `Save ${filename}`,
+    UTI: mimeType === 'text/vcard' ? 'public.vcard' : undefined,
+  });
 }

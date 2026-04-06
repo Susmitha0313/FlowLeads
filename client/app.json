@@ -18,6 +18,10 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "permissions": [
+        "android.permissions.READ_CONTACTS",
+        "android.permissions.WRITE_CONTACTS"
+      ],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
@@ -44,6 +48,14 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "apiUrl": "https://flowleads.onrender.com/api",
+      "router": {},
+      "eas": {
+        "projectId": "d80627d4-4773-4dc5-8460-a98c7b1e40ef"
+      }
+    },
+    "owner": "susdev.com"
   }
 }

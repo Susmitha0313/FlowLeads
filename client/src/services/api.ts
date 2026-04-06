@@ -8,7 +8,10 @@ const api = axios.create({ baseURL: baseUrl });
 
 export const checkAuthStatus = () => api.get('/auth/status');
 export const extractProfile = (url: string) => api.post('/extract', { url });
-export const getProfiles = () => api.get('/profiles');
+export const getProfiles = (page = 1, limit = 20, search = '') =>
+  api.get('/profiles', { params: { page, limit, search } });
+export const updateProfile = (id: string, data: Partial<import('../components/ProfileCard').Profile>) =>
+  api.patch(`/profiles/${id}`, data);
 export const getProfileById = (id: string) => api.get(`/profiles/${id}`);
 export const deleteProfile = (id: string) => api.delete(`/profiles/${id}`);
 export const refreshProfile = (id: string) => api.post(`/profiles/${id}/refresh`);

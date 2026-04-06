@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,10 @@ import {
   Alert,
   StatusBar,
 } from 'react-native';
-import { extractProfile, downloadContact, exportProfiles } from '../src/services/api';
+import * as Contacts from 'expo-contacts';
+import * as Linking from 'expo-linking';
+import { router } from 'expo-router';
+import { extractProfile } from '../src/services/api';
 import ProfileCard, { Profile } from '../src/components/ProfileCard';
 import { saveFileFromUrl } from '../src/utils/saveFile';
 
@@ -26,6 +29,30 @@ export default function HomeScreen() {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // Extract a linkedin URL from any incoming string (share text or direct URL)
+  const extractLinkedInUrl = (text: string): string | null => {
+    const match = text.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s]+/);
+    return match ? match[0] : null;
+  };
+
+  const handleIncomingUrl = (rawUrl: string) => {
+    const linkedInUrl = extractLinkedInUrl(rawUrl);
+    if (linkedInUrl) setUrl(linkedInUrl);
+  };
+
+  useEffect(() => {
+    // App opened from a cold start via share/deep link
+    Linking.getInitialURL().then((initialUrl) => {
+      if (initialUrl) handleIncomingUrl(initialUrl);
+    });
+
+    // App already open and receives a URL
+    const sub = Linking.addEventListener('url', ({ url: incomingUrl }) => {
+      handleIncomingUrl(incomingUrl);
+    });
+
+    return () => sub.remove();
+  }, []);
 
   const handleExtract = async () => {
     const trimmed = url.trim();
@@ -54,15 +81,49 @@ export default function HomeScreen() {
 
   const handleSaveContact = async () => {
     if (!profile) return;
-    console.log("saving contact");
     setSaving(true);
     try {
-      const filename = `${(profile.name ?? 'contact').replace(/\s+/g, '_')}.vcf`;
-      await saveFileFromUrl(
-        `${baseUrl}/profiles/${profile._id}/contact`,
-        filename,
-        'text/vcard'
-      );
+      const nameParts = (profile.name ?? '').trim().split(/\s+/);
+      const firstName = nameParts[0] ?? '';
+      const lastName = nameParts.slice(1).join(' ');
+
+      const contact: Contacts.Contact = {
+        contactType: Contacts.ContactTypes.Person,
+        name: profile.name ?? '',
+        firstName,
+        lastName,
+        jobTitle: profile.designation ?? '',
+        company: profile.company ?? '',
+        phoneNumbers: (profile.phones ?? []).map((p) => ({
+          // number: p.startsWith('+') ? p : `+${p}`,
+          number: p,
+          label: 'mobile',
+        })),
+        emails: (profile.emails ?? []).map((e) => ({
+          email: e,
+          label: 'work',
+        })),
+        urlAddresses: [
+          ...(profile.profileUrl
+            ? [{ url: profile.profileUrl, label: 'linkedin' }]
+            : []),
+          ...(profile.websites ?? []).map((w) => ({ url: w, label: 'work' })),
+        ],
+        note: profile.headline ?? '',
+      };
+
+      if (Platform.OS === 'ios') {
+        // iOS: opens native contact form pre-filled
+        await Contacts.presentFormAsync(undefined, contact, { isNew: true });
+      } else {
+        // Android: request permission then open native contacts form via Intent
+        const { status } = await Contacts.requestPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission denied', 'Contacts permission is required to save.');
+          return;
+        }
+        await Contacts.presentFormAsync(undefined, contact);
+      }
     } catch (err: any) {
       Alert.alert('Error', err?.message ?? 'Failed to save contact');
     } finally {
@@ -93,9 +154,17 @@ export default function HomeScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#0A66C2" />
 
       {/* Top bar */}
-      <View className="bg-[#0A66C2] pt-14 pb-6 px-5">
-        <Text className="text-white text-2xl font-bold tracking-tight">Bobi</Text>
-        <Text className="text-blue-200 text-sm mt-0.5">LinkedIn Profile Scraper</Text>
+      <View className="bg-[#0A66C2] pt-14 pb-6 px-5 flex-row items-end justify-between">
+        <View>
+          <Text className="text-white text-2xl font-bold tracking-tight">Bobi</Text>
+          <Text className="text-blue-200 text-sm mt-0.5">LinkedIn Profile Scraper</Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => router.push('/profiles')}
+          className="bg-white/20 rounded-xl px-4 py-2"
+        >
+          <Text className="text-white text-sm font-medium">📋 Saved</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -134,8 +203,8 @@ export default function HomeScreen() {
             onPress={handleExtract}
             disabled={state === 'loading' || !url.trim()}
             className={`mt-4 rounded-2xl py-3.5 items-center justify-center ${state === 'loading' || !url.trim()
-                ? 'bg-blue-300'
-                : 'bg-[#0A66C2]'
+              ? 'bg-blue-300'
+              : 'bg-[#0A66C2]'
               }`}
           >
             {state === 'loading' ? (
