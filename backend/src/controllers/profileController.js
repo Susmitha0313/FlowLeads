@@ -62,12 +62,23 @@ console.log(`[CTRL:extractProfile] Normalized URL: "${normalizedUrl}"`);
   }
 };
 
-export const getProfiles = async (_req, res) => {
-  console.log('[CTRL:getProfiles] ▶ Fetching all profiles...');
+export const getProfiles = async (req, res) => {
+  const page  = Math.max(1, parseInt(req.query.page)  || 1);
+  const limit = Math.min(50, parseInt(req.query.limit) || 20);
+  const skip  = (page - 1) * limit;
+  const search = req.query.search?.trim() || '';
+
+  console.log(`[CTRL:getProfiles] ▶ page=${page} limit=${limit} search="${search}"`);
   try {
-    const profiles = await Profile.find().sort({ scrapedAt: -1 });
-    console.log(`[CTRL:getProfiles] ✓ Found ${profiles.length} profile(s)`);
-    res.json({ profiles, total: profiles.length });
+    const filter = search
+      ? { $text: { $search: search } }
+      : {};
+    const [profiles, total] = await Promise.all([
+      Profile.find(filter).sort({ scrapedAt: -1 }).skip(skip).limit(limit),
+      Profile.countDocuments(filter),
+    ]);
+    console.log(`[CTRL:getProfiles] ✓ ${profiles.length}/${total} profile(s)`);
+    res.json({ profiles, total, page, pages: Math.ceil(total / limit) });
   } catch (err) {
     console.error(`[CTRL:getProfiles] ✗ DB error — ${err.message}`);
     res.status(500).json({ error: err.message });
@@ -104,6 +115,22 @@ export const deleteProfile = async (req, res) => {
     res.json({ message: 'Deleted' });
   } catch (err) {
     console.error(`[CTRL:deleteProfile] ✗ Error for id ${id} — ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const updateProfile = async (req, res) => {
+  const { id } = req.params;
+  const allowed = ['name','headline','designation','company','location','emails','phones','websites','notes','tags'];
+  const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
+  console.log(`[CTRL:updateProfile] ▶ id: ${id}`, updates);
+  try {
+    const profile = await Profile.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
+    if (!profile) return res.status(404).json({ error: 'Not found' });
+    console.log(`[CTRL:updateProfile] ✓ Updated — "${profile.name}"`);
+    res.json({ profile });
+  } catch (err) {
+    console.error(`[CTRL:updateProfile] ✗ ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 };

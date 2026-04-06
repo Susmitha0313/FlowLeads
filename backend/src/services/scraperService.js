@@ -32,7 +32,18 @@ class LinkedInScraper {
     this.browser = await chromium.launch({
       headless: true, //change to true
       // channel: 'chrome', //remove this 
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-features=site-per-process',
+        '--single-process'
+      ],
     });
     console.log('[SCRAPER:init] ✓ Browser launched');
 
@@ -41,10 +52,17 @@ class LinkedInScraper {
       this.context = await this.browser.newContext({
         storageState: STORAGE_STATE_PATH,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        viewport: { width: 1280, height: 800 },
+        viewport: { width: 390, height: 844 },
         locale: 'en-US',
       });
       console.log('[SCRAPER:init] ✓ Context created with saved session');
+      await this.context.route('**/*', (route) => {
+        const resourceType = route.request().resourceType();
+        if (resourceType === 'image' || resourceType === 'font' || resourceType === 'media') {
+          return route.abort();
+        }
+        route.continue();
+      })
     } else {
       console.log('[SCRAPER:init] No session found — will auto-login');
       this.context = await this.browser.newContext({
@@ -73,7 +91,6 @@ class LinkedInScraper {
     console.log('[SCRAPER:_autoLogin] Navigating to linkedin.com/login...');
     await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' });
 
-    console.log('[SCRAPER:_autoLogin] Filling credentials...');
     await page.fill('#username', email);
     await page.fill('#password', password);
 
@@ -81,7 +98,7 @@ class LinkedInScraper {
     await page.click('button[type="submit"]');
 
     console.log('[SCRAPER:_autoLogin] Waiting for redirect (4s)...');
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(2000);
 
     const currentUrl = page.url();
     console.log(`[SCRAPER:_autoLogin] Post-login URL → "${currentUrl}"`);
@@ -177,20 +194,20 @@ class LinkedInScraper {
       const contactInfo = await this._extractContactInfo(page);
       console.log(`[SCRAPER:scrapeProfile] contactInfo →`, contactInfo);
 
-      console.log('[SCRAPER:scrapeProfile] Extracting experience...');
-      const experienceInfo = await this._extractExperience(page);
-      console.log(`[SCRAPER:scrapeProfile] experienceInfo →`, experienceInfo);
+      // console.log('[SCRAPER:scrapeProfile] Extracting experience...');
+      // const experienceInfo = await this._extractExperience(page);
+      // console.log(`[SCRAPER:scrapeProfile] experienceInfo →`, experienceInfo);
 
-      console.log('[SCRAPER:scrapeProfile] Extracting profile image...');
-      const profileImage = await this._extractProfileImage(page);
-      console.log(`[SCRAPER:scrapeProfile] profileImageUrl → "${profileImage || 'none'}"`);
+      // console.log('[SCRAPER:scrapeProfile] Extracting profile image...');
+      // const profileImage = await this._extractProfileImage(page);
+      // console.log(`[SCRAPER:scrapeProfile] profileImageUrl → "${profileImage || 'none'}"`);
 
       const result = {
         ...basicInfo,
         ...contactInfo,
-        ...experienceInfo,
-        profileImageUrl: profileImage,
-        profileUrl: url,
+        // ...experienceInfo,
+        // profileImageUrl: profileImage,
+        // profileUrl: url,
         scrapedAt: new Date(),
       };
 
@@ -226,8 +243,8 @@ class LinkedInScraper {
       };
       return {
         name: getText(['main h1, main h2']),
-        headline: getText(['main div[dir=ltr]']),
-        location: getLocation(),
+        // headline: getText(['main div[dir=ltr]']),
+        // location: getLocation(),
       };
     });
     if (!result.name) console.warn('[SCRAPER:_extractBasicInfo] ⚠ name came back empty — selector may have changed');
@@ -266,7 +283,7 @@ class LinkedInScraper {
       }
 
       console.log('[SCRAPER:_extractContactInfo] Modal opened — waiting 2s for content...');
-      await page.waitForSelector('a[href^="mailto:"], div span', { timeout: 5000 });
+      await page.waitForSelector('a[href^="mailto:"], div span', { timeout: 6000 });
 
       const contactData = await page.evaluate(() => {
         const emails = [], phones = [], websites = [];
@@ -324,72 +341,72 @@ class LinkedInScraper {
     return result;
   }
 
-  async _extractExperience(page) {
-    console.log('[SCRAPER:_extractExperience] Waiting for experience section...');
-    try {
-      // Wait for experience section to be present (lazy-loaded)
-      await page.waitForSelector('#experience', { timeout: 10000 }).catch(() => {
-        console.warn('[SCRAPER:_extractExperience] ⚠ #experience section not found within timeout — proceeding anyway');
-      });
-      const result = await page.evaluate(() => {
-        let company = '', designation = '';
-        const expSection = document.querySelector('#experience');
-        if (expSection) {
-          const expContainer = expSection.closest('section');
-          if (expContainer) {
-            const firstItem = expContainer.querySelector('li.artdeco-list__item, .pvs-list__paged-list-item');
-            if (firstItem) {
-              const boldSpans = firstItem.querySelectorAll('.t-bold span[aria-hidden="true"]');
-              const normalSpans = firstItem.querySelectorAll('.t-normal:not(.t-black--light) span[aria-hidden="true"]');
-              if (boldSpans.length >= 1) designation = boldSpans[0]?.textContent?.trim() || '';
-              if (normalSpans.length >= 1) company = (normalSpans[0]?.textContent?.trim() || '').split('·')[0].trim();
-            }
-          }
-        }
-        // Fallback: parse from headline
-        if (!company || !designation) {
-          const headline = document.querySelector('.text-body-medium.break-words');
-          if (headline) {
-            const text = headline.innerText || '';
-            if (!company) {
-              const atMatch = text.match(/(?:at|@|,)\s+(.+)/i);
-              if (atMatch) company = atMatch[1].trim();
-            }
-            if (!designation) {
-              const parts = text.split(/\s+(?:at|@|\||,)\s+/i);
-              if (parts.length > 0) designation = parts[0].trim();
-            }
-          }
-        }
-        return { company, designation };
-      });
+  // async _extractExperience(page) {
+  //   console.log('[SCRAPER:_extractExperience] Waiting for experience section...');
+  //   try {
+  //     // Wait for experience section to be present (lazy-loaded)
+  //     await page.waitForSelector('#experience', { timeout: 10000 }).catch(() => {
+  //       console.warn('[SCRAPER:_extractExperience] ⚠ #experience section not found within timeout — proceeding anyway');
+  //     });
+  //     const result = await page.evaluate(() => {
+  //       let company = '', designation = '';
+  //       const expSection = document.querySelector('#experience');
+  //       if (expSection) {
+  //         const expContainer = expSection.closest('section');
+  //         if (expContainer) {
+  //           const firstItem = expContainer.querySelector('li.artdeco-list__item, .pvs-list__paged-list-item');
+  //           if (firstItem) {
+  //             const boldSpans = firstItem.querySelectorAll('.t-bold span[aria-hidden="true"]');
+  //             const normalSpans = firstItem.querySelectorAll('.t-normal:not(.t-black--light) span[aria-hidden="true"]');
+  //             if (boldSpans.length >= 1) designation = boldSpans[0]?.textContent?.trim() || '';
+  //             if (normalSpans.length >= 1) company = (normalSpans[0]?.textContent?.trim() || '').split('·')[0].trim();
+  //           }
+  //         }
+  //       }
+  //       // Fallback: parse from headline
+  //       if (!company || !designation) {
+  //         const headline = document.querySelector('.text-body-medium.break-words');
+  //         if (headline) {
+  //           const text = headline.innerText || '';
+  //           if (!company) {
+  //             const atMatch = text.match(/(?:at|@|,)\s+(.+)/i);
+  //             if (atMatch) company = atMatch[1].trim();
+  //           }
+  //           if (!designation) {
+  //             const parts = text.split(/\s+(?:at|@|\||,)\s+/i);
+  //             if (parts.length > 0) designation = parts[0].trim();
+  //           }
+  //         }
+  //       }
+  //       return { company, designation };
+  //     });
 
-      if (!result.company && !result.designation) {
-        console.warn('[SCRAPER:_extractExperience] ⚠ Both company and designation came back empty');
-      }
-      return result;
-    } catch (err) {
-      console.error(`[SCRAPER:_extractExperience] ✗ Failed — ${err.message}`);
-      return { company: '', designation: '' };
-    }
-  }
+  //     if (!result.company && !result.designation) {
+  //       console.warn('[SCRAPER:_extractExperience] ⚠ Both company and designation came back empty');
+  //     }
+  //     return result;
+  //   } catch (err) {
+  //     console.error(`[SCRAPER:_extractExperience] ✗ Failed — ${err.message}`);
+  //     return { company: '', designation: '' };
+  //   }
+  // }
 
-  async _extractProfileImage(page) {
-    console.log('[SCRAPER:_extractProfileImage] Looking for profile image...');
-    try {
-      const src = await page.evaluate(() => {
-        const img = document.querySelector(
-          'img.pv-top-card-profile-picture__image, img.profile-photo-edit__preview, .pv-top-card__photo-wrapper img'
-        );
-        return img?.src || '';
-      });
-      if (!src) console.warn('[SCRAPER:_extractProfileImage] ⚠ No image found');
-      return src;
-    } catch (err) {
-      console.error(`[SCRAPER:_extractProfileImage] ✗ Error — ${err.message}`);
-      return '';
-    }
-  }
+  // async _extractProfileImage(page) {
+  //   console.log('[SCRAPER:_extractProfileImage] Looking for profile image...');
+  //   try {
+  //     const src = await page.evaluate(() => {
+  //       const img = document.querySelector(
+  //         'img.pv-top-card-profile-picture__image, img.profile-photo-edit__preview, .pv-top-card__photo-wrapper img'
+  //       );
+  //       return img?.src || '';
+  //     });
+  //     if (!src) console.warn('[SCRAPER:_extractProfileImage] ⚠ No image found');
+  //     return src;
+  //   } catch (err) {
+  //     console.error(`[SCRAPER:_extractProfileImage] ✗ Error — ${err.message}`);
+  //     return '';
+  //   }
+  // }
 
   normalizeUrl(url) {
     let normalized = url.trim().replace('://m.linkedin', '://www.linkedin');

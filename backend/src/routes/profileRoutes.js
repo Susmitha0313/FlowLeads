@@ -4,6 +4,7 @@ import {
   extractProfile,
   getProfiles,
   getProfileById,
+  updateProfile,
   deleteProfile,
   refreshProfile,
   exportProfiles,
@@ -20,6 +21,7 @@ router.post('/extract', extractProfile);
 router.get('/profiles', getProfiles);
 router.get('/profiles/export', exportProfiles);   // must be before /:id
 router.get('/profiles/:id', getProfileById);
+router.patch('/profiles/:id', updateProfile);
 router.delete('/profiles/:id', deleteProfile);
 router.post('/profiles/:id/refresh', refreshProfile);
 router.get('/profiles/:id/contact', downloadContact);

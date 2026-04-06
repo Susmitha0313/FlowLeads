@@ -22,9 +22,7 @@ console.log('[SERVER] Registering routes under /api...');
 app.use('/api', profileRoutes);
 console.log('[SERVER] ✓ Routes registered');
 
-app.get('/', (req, res) => {
-  res.send('API is running 🚀');
-});
+
 connectDB();
 
 app.listen(PORT, () => {
