@@ -10,24 +10,26 @@ const __dirname = path.dirname(__filename);
 const AUTH_DIR = path.join(__dirname, '..', 'auth');
 const STORAGE_STATE_PATH = path.join(AUTH_DIR, 'storage-state.json');
 
+const BLOCKED_TYPES = new Set(['image', 'font', 'media', 'stylesheet', 'ping', 'other']);
+const BLOCKED_DOMAINS = ['analytics', 'tracking', 'ads', 'doubleclick', 'google-analytics'];
+
 class LinkedInScraper {
   constructor() {
     this.browser = null;
     this.context = null;
   }
 
-const BLOCKED_TYPES = new Set(['image', 'font', 'media', 'stylesheet', 'ping', 'other']);
-const BLOCKED_DOMAINS = ['analytics', 'tracking', 'ads', 'doubleclick', 'google-analytics'];
+  async _blockResources(context) {
+    await context.route('**/*', (route) => {
+      const type = route.request().resourceType();
+      const url  = route.request().url();
+      if (BLOCKED_TYPES.has(type)) return route.abort();
+      if (BLOCKED_DOMAINS.some(d => url.includes(d))) return route.abort();
+      return route.continue();
+    });
+  }
 
-async _blockResources(context) {
-  await context.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    const url  = route.request().url();
-    if (BLOCKED_TYPES.has(type)) return route.abort();
-    if (BLOCKED_DOMAINS.some(d => url.includes(d))) return route.abort();
-    return route.continue();
-  });
-}
+  isAuthenticated() {
     const exists = fs.existsSync(STORAGE_STATE_PATH);
     console.log(`[SCRAPER:isAuthenticated] session file exists → ${exists}`);
     return exists;
