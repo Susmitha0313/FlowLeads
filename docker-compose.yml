@@ -11,6 +11,13 @@ services:
     volumes:
       - bobi-auth:/app/src/auth
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 512m
+    shm_size: '512mb'
 
 volumes:
   bobi-auth:

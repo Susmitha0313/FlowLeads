@@ -16,7 +16,18 @@ class LinkedInScraper {
     this.context = null;
   }
 
-  isAuthenticated() {
+const BLOCKED_TYPES = new Set(['image', 'font', 'media', 'stylesheet', 'ping', 'other']);
+const BLOCKED_DOMAINS = ['analytics', 'tracking', 'ads', 'doubleclick', 'google-analytics'];
+
+async _blockResources(context) {
+  await context.route('**/*', (route) => {
+    const type = route.request().resourceType();
+    const url  = route.request().url();
+    if (BLOCKED_TYPES.has(type)) return route.abort();
+    if (BLOCKED_DOMAINS.some(d => url.includes(d))) return route.abort();
+    return route.continue();
+  });
+}
     const exists = fs.existsSync(STORAGE_STATE_PATH);
     console.log(`[SCRAPER:isAuthenticated] session file exists → ${exists}`);
     return exists;
@@ -30,8 +41,7 @@ class LinkedInScraper {
     }
 
     this.browser = await chromium.launch({
-      headless: true, //change to true
-      // channel: 'chrome', //remove this 
+      headless: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -42,7 +52,6 @@ class LinkedInScraper {
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
         '--disable-features=site-per-process',
-        '--single-process'
       ],
     });
     console.log('[SCRAPER:init] ✓ Browser launched');
@@ -55,14 +64,8 @@ class LinkedInScraper {
         viewport: { width: 390, height: 844 },
         locale: 'en-US',
       });
+      await this._blockResources(this.context);
       console.log('[SCRAPER:init] ✓ Context created with saved session');
-      await this.context.route('**/*', (route) => {
-        const resourceType = route.request().resourceType();
-        if (resourceType === 'image' || resourceType === 'font' || resourceType === 'media') {
-          return route.abort();
-        }
-        route.continue();
-      })
     } else {
       console.log('[SCRAPER:init] No session found — will auto-login');
       this.context = await this.browser.newContext({
@@ -70,6 +73,7 @@ class LinkedInScraper {
         viewport: { width: 1280, height: 800 },
         locale: 'en-US',
       });
+      await this._blockResources(this.context);
       await this._autoLogin();
     }
   }
@@ -163,10 +167,6 @@ class LinkedInScraper {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       console.log(`[SCRAPER:scrapeProfile] Page loaded in ${Date.now() - navStart}ms`);
 
-      const delay = 2000 + Math.random() * 2000;
-      console.log(`[SCRAPER:scrapeProfile] Human-like delay: ${Math.round(delay)}ms`);
-      await page.waitForTimeout(delay);
-
       const expired = await this._ensureSession(page);
       if (expired) {
         console.log('[SCRAPER:scrapeProfile] Session was expired — retrying scrape after re-login...');
@@ -205,9 +205,7 @@ class LinkedInScraper {
       const result = {
         ...basicInfo,
         ...contactInfo,
-        // ...experienceInfo,
-        // profileImageUrl: profileImage,
-        // profileUrl: url,
+        profileUrl: url,
         scrapedAt: new Date(),
       };
 
