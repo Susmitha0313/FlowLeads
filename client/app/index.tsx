@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import * as Linking from 'expo-linking';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { extractProfile } from '../src/services/api';
 import ProfileCard, { Profile } from '../src/components/ProfileCard';
@@ -72,8 +73,12 @@ export default function HomeScreen() {
       setProfile(res.data.profile);
       setState('success');
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.error ?? err?.message ?? 'Something went wrong';
+      const msg = err?.response?.data?.error ?? err?.message ?? 'Something went wrong';
+      if (msg === 'SESSION_EXPIRED') {
+        await AsyncStorage.removeItem('sessionId');
+        router.replace('/login' as any);
+        return;
+      }
       setErrorMsg(msg);
       setState('error');
     }

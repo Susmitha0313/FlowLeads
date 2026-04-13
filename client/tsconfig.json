@@ -11,7 +11,9 @@
   },
   "include": [
     "**/*.ts",
+    "**/*.js",
     "**/*.tsx",
+    "**/*.jsx",
     "nativewind-env.d.ts",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
