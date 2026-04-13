@@ -84,8 +84,8 @@ export const linkedinCallback = async (req, res) => {
   }
 };
 
-/**
- * GET /api/auth/me
+
+ /* GET /api/auth/me
  * Returns the decoded JWT payload (requires Authorization: Bearer <token>).
  */
 export const getMe = (req, res) => {
