@@ -78,36 +78,28 @@ export const linkedinCallback = async (req, res) => {
     return res.status(502).json({ error: "Token exchange failed", detail });
   }
 
-  // ── Step 2: Fetch user profile (r_liteprofile + r_emailaddress) ───────────
+  // ── Step 2: Fetch user profile via OpenID Connect ──────────────────────
   let profileData;
   try {
-    console.log('[AUTH:linkedinCallback] Step 2 — Fetching name + email in parallel...');
-    const headers = { Authorization: `Bearer ${linkedinAccessToken}` };
-
-    const [meRes, emailRes] = await Promise.all([
-      axios.get("https://api.linkedin.com/v2/me?projection=(id,localizedFirstName,localizedLastName)", { headers }),
-      axios.get("https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))", { headers }),
-    ]);
-
-    const firstName = meRes.data.localizedFirstName ?? "";
-    const lastName  = meRes.data.localizedLastName  ?? "";
-    const id        = meRes.data.id;
-    const email     = emailRes.data?.elements?.[0]?.["handle~"]?.emailAddress ?? null;
-
-    profileData = { id, name: `${firstName} ${lastName}`.trim(), email };
-    console.log(`[AUTH:linkedinCallback] ✓ Step 2 — Profile: id=${id} name="${profileData.name}" email=${email ?? 'none'}`);
+    console.log('[AUTH:linkedinCallback] Step 2 — Fetching user profile from /v2/userinfo...');
+    const profileRes = await axios.get("https://api.linkedin.com/v2/userinfo", {
+      headers: { Authorization: `Bearer ${linkedinAccessToken}` },
+    });
+    profileData = profileRes.data;
+    console.log(`[AUTH:linkedinCallback] ✓ Step 2 — Profile fetched: sub=${profileData.sub} name="${profileData.name}" email=${profileData.email ?? 'none'}`);
   } catch (err) {
     const status = err.response?.status;
     const detail = err.response?.data || err.message;
     console.error(`[AUTH:linkedinCallback] ✗ Step 2 — Profile fetch failed (HTTP ${status})`);
     console.error(`[AUTH:linkedinCallback]   LinkedIn response:`, JSON.stringify(detail));
-    console.error(`[AUTH:linkedinCallback]   Hint: ensure r_liteprofile and r_emailaddress products are enabled in LinkedIn Dev Console`);
+    console.error(`[AUTH:linkedinCallback]   Hint: ensure "Sign In with LinkedIn using OpenID Connect" product is enabled`);
     return res.status(502).json({ error: "Profile fetch failed", detail });
   }
 
   // ── Step 3: Issue JWT ──────────────────────────────────────────────────
   try {
-    const { id, name: displayName, email = null } = profileData;
+    const { sub: id, name, given_name, family_name, email = null } = profileData;
+    const displayName = name || `${given_name ?? ""} ${family_name ?? ""}`.trim();
 
     console.log(`[AUTH:linkedinCallback] Step 3 — Signing JWT for "${displayName}" (${id})`);
     const token = jwt.sign({ linkedinId: id, name: displayName, email }, JWT_SECRET, {

@@ -14,48 +14,45 @@ import { linkedinAuth } from "../src/services/api";
 
 WebBrowser.maybeCompleteAuthSession();
 
-const LINKEDIN_CLIENT_ID = process.env.EXPO_PUBLIC_LINKEDIN_CLIENT_ID!;
+const LINKEDIN_CLIENT_ID    = process.env.EXPO_PUBLIC_LINKEDIN_CLIENT_ID!;
+const LINKEDIN_REDIRECT_URI = process.env.EXPO_PUBLIC_LINKEDIN_REDIRECT_URI!;
 
-// This is the HTTPS backend URL LinkedIn redirects to.
-// The backend then redirects to bobi://login?code=... which the app intercepts.
-const BACKEND_REDIRECT_URI = process.env.EXPO_PUBLIC_LINKEDIN_REDIRECT_URI!;
+// Log env vars on module load so you can verify them immediately in Metro logs
+console.log('[LOGIN] EXPO_PUBLIC_LINKEDIN_CLIENT_ID   :', LINKEDIN_CLIENT_ID   ?? '⚠️  NOT SET');
+console.log('[LOGIN] EXPO_PUBLIC_LINKEDIN_REDIRECT_URI:', LINKEDIN_REDIRECT_URI ?? '⚠️  NOT SET');
 
-// The deep-link prefix openAuthSessionAsync watches for to intercept the redirect.
-// Must match APP_DEEP_LINK_SCHEME on the backend.
-const APP_REDIRECT_PREFIX = "bobi://login";
-
-console.log('[LOGIN] LINKEDIN_CLIENT_ID    :', LINKEDIN_CLIENT_ID    ?? '⚠️  NOT SET');
-console.log('[LOGIN] BACKEND_REDIRECT_URI  :', BACKEND_REDIRECT_URI  ?? '⚠️  NOT SET');
-console.log('[LOGIN] APP_REDIRECT_PREFIX   :', APP_REDIRECT_PREFIX);
-
-// LinkedIn auth URL — scope uses r_liteprofile + r_emailaddress (not openid)
-// redirect_uri points to the backend HTTPS callback (LinkedIn requires HTTPS)
-const buildAuthUrl = () =>
+const LINKEDIN_AUTH_URL =
   `https://www.linkedin.com/oauth/v2/authorization` +
   `?response_type=code` +
   `&client_id=${LINKEDIN_CLIENT_ID}` +
-  `&redirect_uri=${encodeURIComponent(BACKEND_REDIRECT_URI)}` +
-  `&scope=${encodeURIComponent("r_liteprofile r_emailaddress")}`;
+  `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
+  `&scope=${encodeURIComponent("openid profile email")}`;
 
 export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Handle cold-launch deep link (app was not running when link fired)
+    console.log('[LOGIN] Screen mounted, registering deep-link listener');
+
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      console.log('[LOGIN] Deep-link received (listener):', url);
+      handleDeepLink(url);
+    });
+
+    // Handle cold-launch via deep link
     Linking.getInitialURL().then((url) => {
-      if (url && url.includes("login")) {
+      if (url) {
         console.log('[LOGIN] Cold-launch deep-link:', url);
         handleDeepLink(url);
+      } else {
+        console.log('[LOGIN] No cold-launch deep-link');
       }
     });
 
-    // Handle warm deep link (app already running)
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      console.log('[LOGIN] Deep-link received:', url);
-      if (url.includes("login")) handleDeepLink(url);
-    });
-
-    return () => subscription.remove();
+    return () => {
+      console.log('[LOGIN] Removing deep-link listener');
+      subscription.remove();
+    };
   }, []);
 
   const handleDeepLink = (url: string) => {
@@ -63,17 +60,22 @@ export default function LoginScreen() {
     const parsed = Linking.parse(url);
     console.log('[LOGIN] Parsed — scheme:', parsed.scheme, '| path:', parsed.path, '| params:', JSON.stringify(parsed.queryParams));
 
+    if (parsed.path !== "login") {
+      console.log('[LOGIN] Deep-link path is not "login", ignoring');
+      return;
+    }
+
     const { code, error } = parsed.queryParams ?? {};
 
     if (error) {
-      console.error('[LOGIN] ✗ LinkedIn error:', error);
+      console.error('[LOGIN] ✗ LinkedIn returned error via deep-link:', error);
       Alert.alert("Login failed", String(error));
       setLoading(false);
       return;
     }
 
     if (code) {
-      console.log('[LOGIN] ✓ Code received, exchanging with backend...');
+      console.log('[LOGIN] ✓ Code extracted from deep-link, proceeding to exchange');
       exchangeCode(String(code));
     } else {
       console.warn('[LOGIN] Deep-link had no code and no error — ignoring');
@@ -81,42 +83,39 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    console.log('[LOGIN] Login button pressed');
+    console.log('[LOGIN] Opening auth session with URL:', LINKEDIN_AUTH_URL);
     setLoading(true);
-    const authUrl = buildAuthUrl();
-    console.log('[LOGIN] Opening auth session');
-    console.log('[LOGIN] Auth URL    :', authUrl);
-    console.log('[LOGIN] Watching for:', APP_REDIRECT_PREFIX);
-
     try {
-      // openAuthSessionAsync opens an in-app browser and watches for APP_REDIRECT_PREFIX.
-      // When the backend redirects to bobi://login?code=..., the browser intercepts it
-      // and returns result.type === 'success' with result.url containing the code.
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, APP_REDIRECT_PREFIX);
-      console.log('[LOGIN] Auth session result type:', result.type);
+      const redirectUri = Linking.createURL('login');
+      console.log('[LOGIN] Redirect URI for openAuthSessionAsync:', redirectUri);
 
-      if (result.type === "success" && result.url) {
-        console.log('[LOGIN] Intercepted redirect URL:', result.url);
+      const result = await WebBrowser.openAuthSessionAsync(LINKEDIN_AUTH_URL, redirectUri);
+      console.log('[LOGIN] Auth session closed — result type:', result.type);
+
+      if (result.type === 'success' && result.url) {
+        console.log('[LOGIN] Auth session returned URL:', result.url);
         handleDeepLink(result.url);
       } else {
-        console.log('[LOGIN] Auth session dismissed or cancelled');
+        console.log('[LOGIN] User dismissed or cancelled auth session');
         setLoading(false);
       }
     } catch (err: any) {
-      console.error('[LOGIN] ✗ openAuthSessionAsync error:', err.message);
+      console.error('[LOGIN] ✗ Failed to open auth session:', err.message);
       Alert.alert("Error", err.message);
       setLoading(false);
     }
   };
 
   const exchangeCode = async (code: string) => {
-    console.log('[LOGIN] POSTing code to backend for JWT...');
+    console.log('[LOGIN] Exchanging code with backend...');
     try {
       const { data } = await linkedinAuth(code);
       console.log('[LOGIN] ✓ JWT received — user:', data.user?.name, '| email:', data.user?.email);
 
       await AsyncStorage.setItem("authToken", data.token);
       await AsyncStorage.setItem("authUser", JSON.stringify(data.user));
-      console.log('[LOGIN] ✓ Stored token, navigating to home');
+      console.log('[LOGIN] ✓ Token stored, navigating to home');
 
       router.replace("/");
     } catch (err: any) {
