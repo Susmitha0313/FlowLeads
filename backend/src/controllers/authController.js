@@ -8,6 +8,7 @@ const env = () => ({
   LINKEDIN_REDIRECT_URI:  process.env.LINKEDIN_REDIRECT_URI,
   JWT_SECRET:             process.env.JWT_SECRET,
   APP_DEEP_LINK_SCHEME:   process.env.APP_DEEP_LINK_SCHEME,
+  APP_WEB_URL:            process.env.APP_WEB_URL,
 });
 
 /**
@@ -16,19 +17,30 @@ const env = () => ({
  */
 export const linkedinOAuthCallback = (req, res) => {
   const { code, error, error_description, state } = req.query;
-  const { APP_DEEP_LINK_SCHEME } = env();
+  const { APP_DEEP_LINK_SCHEME, APP_WEB_URL } = env();
   const scheme = APP_DEEP_LINK_SCHEME || "bobi";
 
-  console.log(`[AUTH:oauthCallback] Received callback — code=${!!code} error=${error ?? 'none'} state=${state ?? 'none'}`);
+  // Detect if the request came from the web platform via the state param
+  const isWeb = typeof state === 'string' && state.includes('platform=web');
+  const webBase = APP_WEB_URL || "http://localhost:8081";
+
+  console.log(`[AUTH:oauthCallback] Received callback — code=${!!code} error=${error ?? 'none'} state=${state ?? 'none'} isWeb=${isWeb}`);
 
   if (error || !code) {
     const msg = error_description || error || "unknown_error";
     console.error(`[AUTH:oauthCallback] ✗ LinkedIn returned error: "${msg}"`);
-    return res.redirect(`${scheme}://login?error=${encodeURIComponent(msg)}`);
+    const dest = isWeb
+      ? `${webBase}/login?error=${encodeURIComponent(msg)}`
+      : `${scheme}://login?error=${encodeURIComponent(msg)}`;
+    return res.redirect(dest);
   }
 
-  console.log(`[AUTH:oauthCallback] ✓ Code received, deep-linking to ${scheme}://login`);
-  res.redirect(`${scheme}://login?code=${encodeURIComponent(code)}`);
+  const dest = isWeb
+    ? `${webBase}/login?code=${encodeURIComponent(code)}`
+    : `${scheme}://login?code=${encodeURIComponent(code)}`;
+
+  console.log(`[AUTH:oauthCallback] ✓ Code received, redirecting to ${dest}`);
+  res.redirect(dest);
 };
 
 /**

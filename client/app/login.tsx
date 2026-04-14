@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
@@ -17,16 +18,8 @@ WebBrowser.maybeCompleteAuthSession();
 const LINKEDIN_CLIENT_ID    = process.env.EXPO_PUBLIC_LINKEDIN_CLIENT_ID!;
 const LINKEDIN_REDIRECT_URI = process.env.EXPO_PUBLIC_LINKEDIN_REDIRECT_URI!;
 
-// Log env vars on module load so you can verify them immediately in Metro logs
 console.log('[LOGIN] EXPO_PUBLIC_LINKEDIN_CLIENT_ID   :', LINKEDIN_CLIENT_ID   ?? '⚠️  NOT SET');
 console.log('[LOGIN] EXPO_PUBLIC_LINKEDIN_REDIRECT_URI:', LINKEDIN_REDIRECT_URI ?? '⚠️  NOT SET');
-
-const LINKEDIN_AUTH_URL =
-  `https://www.linkedin.com/oauth/v2/authorization` +
-  `?response_type=code` +
-  `&client_id=${LINKEDIN_CLIENT_ID}` +
-  `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
-  `&scope=${encodeURIComponent("openid profile email")}`;
 
 export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
@@ -60,6 +53,7 @@ export default function LoginScreen() {
     const parsed = Linking.parse(url);
     console.log('[LOGIN] Parsed — scheme:', parsed.scheme, '| path:', parsed.path, '| params:', JSON.stringify(parsed.queryParams));
 
+    // Accept both bobi://login (native) and http(s)://host/login (web)
     if (parsed.path !== "login") {
       console.log('[LOGIN] Deep-link path is not "login", ignoring');
       return;
@@ -84,13 +78,26 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     console.log('[LOGIN] Login button pressed');
-    console.log('[LOGIN] Opening auth session with URL:', LINKEDIN_AUTH_URL);
     setLoading(true);
     try {
-      const redirectUri = Linking.createURL('login');
-      console.log('[LOGIN] Redirect URI for openAuthSessionAsync:', redirectUri);
+      const isWeb = Platform.OS === 'web';
+      // On web, backend must redirect back to the web URL, not bobi://
+      // We pass platform in state so the backend knows which scheme to use
+      const state = isWeb ? 'platform=web' : 'platform=native';
+      const authUrl =
+        `https://www.linkedin.com/oauth/v2/authorization` +
+        `?response_type=code` +
+        `&client_id=${LINKEDIN_CLIENT_ID}` +
+        `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
+        `&scope=${encodeURIComponent("openid profile email")}` +
+        `&state=${encodeURIComponent(state)}`;
 
-      const result = await WebBrowser.openAuthSessionAsync(LINKEDIN_AUTH_URL, redirectUri);
+      // On web: watch for http://localhost:8081/login (what the browser can actually navigate to)
+      // On native: watch for bobi://login (custom scheme the OS handles)
+      const redirectUri = isWeb ? Linking.createURL('login') : 'bobi://login';
+      console.log('[LOGIN] Opening auth session — platform:', Platform.OS, '| redirectUri:', redirectUri);
+
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
       console.log('[LOGIN] Auth session closed — result type:', result.type);
 
       if (result.type === 'success' && result.url) {
