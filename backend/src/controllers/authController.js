@@ -1,13 +1,14 @@
 import axios from "axios";
 import jwt from "jsonwebtoken";
 
-const {
-  LINKEDIN_CLIENT_ID,
-  LINKEDIN_CLIENT_SECRET,
-  LINKEDIN_REDIRECT_URI,
-  JWT_SECRET,
-  APP_DEEP_LINK_SCHEME,
-} = process.env;
+// Read at call-time so dotenv.config() in server.js has already run
+const env = () => ({
+  LINKEDIN_CLIENT_ID:     process.env.LINKEDIN_CLIENT_ID,
+  LINKEDIN_CLIENT_SECRET: process.env.LINKEDIN_CLIENT_SECRET,
+  LINKEDIN_REDIRECT_URI:  process.env.LINKEDIN_REDIRECT_URI,
+  JWT_SECRET:             process.env.JWT_SECRET,
+  APP_DEEP_LINK_SCHEME:   process.env.APP_DEEP_LINK_SCHEME,
+});
 
 /**
  * GET /api/auth/linkedin/callback
@@ -15,6 +16,7 @@ const {
  */
 export const linkedinOAuthCallback = (req, res) => {
   const { code, error, error_description, state } = req.query;
+  const { APP_DEEP_LINK_SCHEME } = env();
   const scheme = APP_DEEP_LINK_SCHEME || "bobi";
 
   console.log(`[AUTH:oauthCallback] Received callback — code=${!!code} error=${error ?? 'none'} state=${state ?? 'none'}`);
@@ -36,9 +38,11 @@ export const linkedinOAuthCallback = (req, res) => {
  */
 export const linkedinCallback = async (req, res) => {
   const { code } = req.body;
+  const { LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, LINKEDIN_REDIRECT_URI, JWT_SECRET } = env();
 
   console.log(`[AUTH:linkedinCallback] Code exchange request received — code present: ${!!code}`);
   console.log(`[AUTH:linkedinCallback] Using redirect_uri: ${LINKEDIN_REDIRECT_URI}`);
+  console.log(`[AUTH:linkedinCallback] client_id present: ${!!LINKEDIN_CLIENT_ID} | client_secret present: ${!!LINKEDIN_CLIENT_SECRET} | jwt_secret present: ${!!JWT_SECRET}`);
 
   if (!code) {
     console.warn('[AUTH:linkedinCallback] ✗ No code in request body');
@@ -61,7 +65,10 @@ export const linkedinCallback = async (req, res) => {
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     );
     linkedinAccessToken = tokenRes.data.access_token;
-    console.log(`[AUTH:linkedinCallback] ✓ Step 1 — Access token received (expires_in: ${tokenRes.data.expires_in}s)`);
+    const masked = linkedinAccessToken
+      ? `${linkedinAccessToken.slice(0, 8)}...${linkedinAccessToken.slice(-4)}`
+      : 'MISSING';
+    console.log(`[AUTH:linkedinCallback] ✓ Step 1 — LinkedIn access token: ${masked} (expires_in: ${tokenRes.data.expires_in}s)`);
   } catch (err) {
     const status = err.response?.status;
     const detail = err.response?.data || err.message;
@@ -71,35 +78,44 @@ export const linkedinCallback = async (req, res) => {
     return res.status(502).json({ error: "Token exchange failed", detail });
   }
 
-  // ── Step 2: Fetch user profile via OpenID Connect ──────────────────────
+  // ── Step 2: Fetch user profile (r_liteprofile + r_emailaddress) ───────────
   let profileData;
   try {
-    console.log('[AUTH:linkedinCallback] Step 2 — Fetching user profile from /v2/userinfo...');
-    const profileRes = await axios.get("https://api.linkedin.com/v2/userinfo", {
-      headers: { Authorization: `Bearer ${linkedinAccessToken}` },
-    });
-    profileData = profileRes.data;
-    console.log(`[AUTH:linkedinCallback] ✓ Step 2 — Profile fetched: sub=${profileData.sub} name="${profileData.name}" email=${profileData.email ?? 'none'}`);
+    console.log('[AUTH:linkedinCallback] Step 2 — Fetching name + email in parallel...');
+    const headers = { Authorization: `Bearer ${linkedinAccessToken}` };
+
+    const [meRes, emailRes] = await Promise.all([
+      axios.get("https://api.linkedin.com/v2/me?projection=(id,localizedFirstName,localizedLastName)", { headers }),
+      axios.get("https://api.linkedin.com/v2/emailAddress?q=members&projection=(elements*(handle~))", { headers }),
+    ]);
+
+    const firstName = meRes.data.localizedFirstName ?? "";
+    const lastName  = meRes.data.localizedLastName  ?? "";
+    const id        = meRes.data.id;
+    const email     = emailRes.data?.elements?.[0]?.["handle~"]?.emailAddress ?? null;
+
+    profileData = { id, name: `${firstName} ${lastName}`.trim(), email };
+    console.log(`[AUTH:linkedinCallback] ✓ Step 2 — Profile: id=${id} name="${profileData.name}" email=${email ?? 'none'}`);
   } catch (err) {
     const status = err.response?.status;
     const detail = err.response?.data || err.message;
     console.error(`[AUTH:linkedinCallback] ✗ Step 2 — Profile fetch failed (HTTP ${status})`);
     console.error(`[AUTH:linkedinCallback]   LinkedIn response:`, JSON.stringify(detail));
-    console.error(`[AUTH:linkedinCallback]   Hint: ensure "Sign In with LinkedIn using OpenID Connect" product is enabled`);
+    console.error(`[AUTH:linkedinCallback]   Hint: ensure r_liteprofile and r_emailaddress products are enabled in LinkedIn Dev Console`);
     return res.status(502).json({ error: "Profile fetch failed", detail });
   }
 
   // ── Step 3: Issue JWT ──────────────────────────────────────────────────
   try {
-    const { sub: id, name, given_name, family_name, email = null } = profileData;
-    const displayName = name || `${given_name ?? ""} ${family_name ?? ""}`.trim();
+    const { id, name: displayName, email = null } = profileData;
 
     console.log(`[AUTH:linkedinCallback] Step 3 — Signing JWT for "${displayName}" (${id})`);
     const token = jwt.sign({ linkedinId: id, name: displayName, email }, JWT_SECRET, {
       expiresIn: "7d",
     });
 
-    console.log(`[AUTH:linkedinCallback] ✓ Step 3 — JWT issued successfully for "${displayName}"`);
+    const maskedJwt = `${token.slice(0, 12)}...${token.slice(-6)}`;
+    console.log(`[AUTH:linkedinCallback] ✓ Step 3 — JWT issued for "${displayName}" | token: ${maskedJwt}`);
     res.json({ token, user: { name: displayName, email } });
   } catch (err) {
     console.error(`[AUTH:linkedinCallback] ✗ Step 3 — JWT signing failed: ${err.message}`);
