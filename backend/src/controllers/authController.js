@@ -49,11 +49,15 @@ export const linkedinOAuthCallback = (req, res) => {
  * Exchanges the code for a LinkedIn access token, fetches profile, issues JWT.
  */
 export const linkedinCallback = async (req, res) => {
-  const { code } = req.body;
+  const { code, redirectUri: clientRedirectUri } = req.body;
   const { LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, LINKEDIN_REDIRECT_URI, JWT_SECRET } = env();
 
+  // Prefer the redirectUri sent by the client (varies per environment: Expo Go proxy, web, build)
+  // Fall back to the env var for backwards compatibility
+  const effectiveRedirectUri = clientRedirectUri || LINKEDIN_REDIRECT_URI;
+
   console.log(`[AUTH:linkedinCallback] Code exchange request received — code present: ${!!code}`);
-  console.log(`[AUTH:linkedinCallback] Using redirect_uri: ${LINKEDIN_REDIRECT_URI}`);
+  console.log(`[AUTH:linkedinCallback] Using redirect_uri: ${effectiveRedirectUri} (from ${clientRedirectUri ? 'client' : 'env'})`);
   console.log(`[AUTH:linkedinCallback] client_id present: ${!!LINKEDIN_CLIENT_ID} | client_secret present: ${!!LINKEDIN_CLIENT_SECRET} | jwt_secret present: ${!!JWT_SECRET}`);
 
   if (!code) {
@@ -70,7 +74,7 @@ export const linkedinCallback = async (req, res) => {
       new URLSearchParams({
         grant_type: "authorization_code",
         code,
-        redirect_uri: LINKEDIN_REDIRECT_URI,
+        redirect_uri: effectiveRedirectUri,
         client_id: LINKEDIN_CLIENT_ID,
         client_secret: LINKEDIN_CLIENT_SECRET,
       }).toString(),
