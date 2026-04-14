@@ -84,18 +84,24 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     console.log('[LOGIN] Login button pressed');
-    console.log('[LOGIN] Opening browser with URL:', LINKEDIN_AUTH_URL);
+    console.log('[LOGIN] Opening auth session with URL:', LINKEDIN_AUTH_URL);
     setLoading(true);
     try {
-      const result = await WebBrowser.openBrowserAsync(LINKEDIN_AUTH_URL);
-      console.log('[LOGIN] Browser closed — result type:', result.type);
-      // If user dismissed the browser without completing login
-      if (result.type === 'cancel' || result.type === 'dismiss') {
-        console.log('[LOGIN] User dismissed browser without completing login');
+      const redirectUri = Linking.createURL('login');
+      console.log('[LOGIN] Redirect URI for openAuthSessionAsync:', redirectUri);
+
+      const result = await WebBrowser.openAuthSessionAsync(LINKEDIN_AUTH_URL, redirectUri);
+      console.log('[LOGIN] Auth session closed — result type:', result.type);
+
+      if (result.type === 'success' && result.url) {
+        console.log('[LOGIN] Auth session returned URL:', result.url);
+        handleDeepLink(result.url);
+      } else {
+        console.log('[LOGIN] User dismissed or cancelled auth session');
         setLoading(false);
       }
     } catch (err: any) {
-      console.error('[LOGIN] ✗ Failed to open browser:', err.message);
+      console.error('[LOGIN] ✗ Failed to open auth session:', err.message);
       Alert.alert("Error", err.message);
       setLoading(false);
     }
