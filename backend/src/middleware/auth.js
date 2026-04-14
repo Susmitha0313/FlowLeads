@@ -6,7 +6,9 @@ import jwt from 'jsonwebtoken';
  */
 export const requireAuth = (req, res, next) => {
   const header = req.headers.authorization;
+
   if (!header?.startsWith('Bearer ')) {
+    console.warn(`[AUTH:requireAuth] ✗ Missing/invalid Authorization header on ${req.method} ${req.path}`);
     return res.status(401).json({ error: 'Missing or invalid Authorization header' });
   }
 
@@ -15,6 +17,7 @@ export const requireAuth = (req, res, next) => {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch (err) {
+    console.warn(`[AUTH:requireAuth] ✗ Token verification failed on ${req.method} ${req.path} — ${err.message}`);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 };

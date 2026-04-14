@@ -6,7 +6,13 @@ import '../global.css';
 export default function RootLayout() {
   useEffect(() => {
     AsyncStorage.getItem('authToken').then((token) => {
-      if (!token) router.replace('/login' as any);
+      console.log('[LAYOUT] Auth token present:', !!token);
+      if (!token) {
+        console.log('[LAYOUT] No token — redirecting to /login');
+        router.replace('/login' as any);
+      } else {
+        console.log('[LAYOUT] Token found — staying on current route');
+      }
     });
   }, []);
 

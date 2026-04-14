@@ -1,14 +1,53 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const api = axios.create({ baseURL: process.env.EXPO_PUBLIC_API_URL });
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL;
+console.log('[API] Base URL:', BASE_URL);
 
-// Attach JWT bearer token to every request automatically
+const api = axios.create({ baseURL: BASE_URL });
+
+// ── Request interceptor — attach JWT + log ─────────────────────────────────
 api.interceptors.request.use(async (config) => {
   const token = await AsyncStorage.getItem('authToken');
-  if (token) config.headers['Authorization'] = `Bearer ${token}`;
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    console.warn(`[API] No auth token found for ${config.method?.toUpperCase()} ${config.url}`);
+  }
+  console.log(`[API] → ${config.method?.toUpperCase()} ${config.url}`);
   return config;
 });
+
+// ── Response interceptor — log success + structured errors ─────────────────
+api.interceptors.response.use(
+  (response) => {
+    console.log(`[API] ← ${response.status} ${response.config.url}`);
+    return response;
+  },
+  (error: AxiosError<{ error?: string; detail?: unknown }>) => {
+    const status   = error.response?.status;
+    const url      = error.config?.url;
+    const method   = error.config?.method?.toUpperCase();
+    const resData  = error.response?.data;
+
+    if (error.response) {
+      console.error(`[API] ✗ ${method} ${url} → HTTP ${status}`);
+      console.error(`[API]   Server message: ${resData?.error ?? JSON.stringify(resData)}`);
+      if (resData?.detail) {
+        console.error(`[API]   Detail:`, JSON.stringify(resData.detail));
+      }
+    } else if (error.request) {
+      // Request was made but no response — network issue
+      console.error(`[API] ✗ ${method} ${url} → No response received`);
+      console.error(`[API]   Hint: is the backend running? Is EXPO_PUBLIC_API_URL correct?`);
+      console.error(`[API]   EXPO_PUBLIC_API_URL = ${BASE_URL}`);
+    } else {
+      console.error(`[API] ✗ Request setup error: ${error.message}`);
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 // Auth
 export const linkedinAuth = (code: string) =>
