@@ -7,7 +7,7 @@ import { connectDB } from './config/db.js';
 import profileRoutes from './routes/profileRoutes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: resolve(__dirname, '../../.env') });
+dotenv.config({ path: resolve(__dirname, '../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
