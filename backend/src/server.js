@@ -49,6 +49,5 @@ connectDB();
 app.listen(PORT, () => {
   console.log(`\n[SERVER] ✓ Running on http://localhost:${PORT}`);
   console.log(`[SERVER] NODE_ENV=${process.env.NODE_ENV}`);
-  console.log(`[SERVER] LINKEDIN_REDIRECT_URI=${process.env.LINKEDIN_REDIRECT_URI}`);
   console.log('[SERVER] Ready to accept requests\n');
 });

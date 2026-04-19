@@ -1,211 +1,308 @@
 /* global document */
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { chromium } from 'playwright';
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { chromium } from "playwright";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const AUTH_DIR = path.join(__dirname, '..', 'auth');
+const USER_DATA_DIR = path.join(__dirname, "..", "user-data");
+const AUTH_FILE = path.join(__dirname, "..", "auth.json");
 
-const BLOCKED_TYPES = new Set(['image', 'font', 'media', 'stylesheet', 'ping', 'other']);
-const BLOCKED_DOMAINS = ['analytics', 'tracking', 'ads', 'doubleclick', 'google-analytics'];
+const BLOCKED_TYPES = new Set(["image", "font", "media", "ping"]);
+const BLOCKED_DOMAINS = [
+  "analytics",
+  "tracking",
+  "ads",
+  "doubleclick",
+  "google-analytics",
+];
 
-// sessionId → { browser, context, status: 'pending'|'ready'|'failed' }
-const sessions = new Map();
+// ─── Scraping browser (in-memory, no disk writes) ────────────────────────────
+let _browser = null;
+let _scrapingContext = null;
 
-if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
+// ─── Login browser (persistent context, visible) ─────────────────────────────
+let _loginContext = null;
 
-function sessionPath(sessionId) {
-  return path.join(AUTH_DIR, `session-${sessionId}.json`);
-}
+let loginState = { inProgress: false, completed: false };
+const setLoginState = (state) => {
+  loginState = { ...loginState, ...state };
+};
 
+// ─── Resource blocking ────────────────────────────────────────────────────────
 async function _blockResources(context) {
-  await context.route('**/*', (route) => {
+  await context.route("**/*", (route) => {
     const type = route.request().resourceType();
     const url = route.request().url();
-    if (BLOCKED_TYPES.has(type)) return route.abort();
-    if (BLOCKED_DOMAINS.some(d => url.includes(d))) return route.abort();
+    if (
+      BLOCKED_TYPES.has(type) ||
+      BLOCKED_DOMAINS.some((d) => url.includes(d))
+    ) {
+      return route.abort();
+    }
     return route.continue();
   });
 }
 
+// ─── Session management ───────────────────────────────────────────────────────
+
 /**
- * Start a login flow for a new session.
- * Opens a visible browser page at LinkedIn login and waits for the user to authenticate.
- * Returns sessionId immediately; caller should poll getSessionStatus().
+ * Checks if auth.json exists and the session is still valid by loading it
+ * into a clean in-memory browser and hitting /feed.
  */
-export async function startLoginSession(sessionId) {
-  console.log(`[SCRAPER:startLoginSession] Starting session ${sessionId}`);
+export async function hasValidSession() {
+  console.log("[SESSION] Checking session validity...");
+  if (!fs.existsSync(AUTH_FILE)) {
+    console.log("[SESSION] ✗ auth.json not found — not logged in");
+    return false;
+  }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-  });
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+    });
+    const context = await browser.newContext({ storageState: AUTH_FILE });
+    const page = await context.newPage();
+    await page.goto("https://www.linkedin.com/feed", {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    }).catch(() => {});
+    // ✅ Check for login indicators (multiple selectors for resilience)
+    const loggedIn = await page.evaluate(() => {
+      const url = window.location.href;
+      if (url.includes("/login") || url.includes("/authwall")) return false;
 
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 390, height: 844 },
-    locale: 'en-US',
-  });
+      const selectors = [
+        "img.global-nav__me-photo",
+        ".global-nav__me-photo",
+        ".global-nav__primary-link-me-menu-trigger img",
+        ".feed-identity-module__actor-meta",
+        ".scaffold-layout__main",
+      ];
+      for (const sel of selectors) {
+        if (document.querySelector(sel)) return true;
+      }
+      // Fallback: on /feed with real content
+      return url.includes("/feed") && document.body.innerText.length > 500;
+    });
 
-  sessions.set(sessionId, { browser, context, status: 'pending' });
+    console.log(
+      `[SESSION] ${loggedIn ? "✓ Session is active" : "✗ Session expired"}`,
+    );
 
-  // Watch for successful login in background
-  _watchForLogin(sessionId).catch(err => {
-    console.error(`[SCRAPER:startLoginSession] Watch failed for ${sessionId}: ${err.message}`);
-    const s = sessions.get(sessionId);
-    if (s) s.status = 'failed';
-  });
-
-  return sessionId;
+    return loggedIn;
+  } catch (err) {
+    console.warn(`[SESSION] ✗ Session check failed — ${err.message}`);
+    return false;
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
 }
 
-async function _watchForLogin(sessionId) {
-  const session = sessions.get(sessionId);
-  if (!session) return;
+/**
+ * Opens a visible persistent-context browser for manual LinkedIn login.
+ * Once the feed is detected, saves storage state to auth.json and closes.
+ */
+export async function startLoginSession() {
+  if (_loginContext) return;
 
-  const { context } = session;
-  const page = await context.newPage();
+  setLoginState({ inProgress: true, completed: false });
 
-  console.log(`[SCRAPER:_watchForLogin] Navigating to LinkedIn login for ${sessionId}`);
-  await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' });
+  _loginContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
+    headless: false,
+    args: ["--start-maximized"],
+    viewport: null,
+  });
 
-  // Poll until user lands on feed or any non-auth page (max 5 min)
-  const deadline = Date.now() + 5 * 60 * 1000;
-  while (Date.now() < deadline) {
-    await page.waitForTimeout(2000);
-    const url = page.url();
-    console.log(`[SCRAPER:_watchForLogin] ${sessionId} current url: ${url}`);
+  // ✅ Use the default page that launchPersistentContext already creates
+  const pages = _loginContext.pages();
+  const page = pages.length > 0 ? pages[0] : await _loginContext.newPage();
 
-    if (
-      !url.includes('/login') &&
-      !url.includes('/checkpoint') &&
-      !url.includes('/authwall') &&
-      url.includes('linkedin.com')
-    ) {
-      console.log(`[SCRAPER:_watchForLogin] ✓ Login detected for ${sessionId}`);
-      await context.storageState({ path: sessionPath(sessionId) });
-      session.status = 'ready';
-      await page.close();
-      return;
+  console.log("[SESSION] Opening LinkedIn login...");
+  await page.goto("https://www.linkedin.com/login");
+
+  // Debug navigation
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) {
+      console.log("[NAV]", frame.url());
     }
-  }
+  });
 
-  session.status = 'failed';
-  await page.close();
-  console.warn(`[SCRAPER:_watchForLogin] ✗ Timed out waiting for login — ${sessionId}`);
+  try {
+    console.log("[SESSION] Waiting for manual login...");
+
+    // ✅ Detect login via URL change + multiple avatar selectors
+    //    LinkedIn frequently renames CSS classes, so we check several
+    //    indicators rather than relying on a single selector.
+    await page.waitForFunction(() => {
+      const url = window.location.href;
+
+      // Still on login/checkpoint pages → not logged in yet
+      if (url.includes("/login") || url.includes("/checkpoint")) return false;
+
+      // Check for known avatar / nav selectors (any one is enough)
+      const avatarSelectors = [
+        "img.global-nav__me-photo",                  // classic
+        "img.evi-image.ember-view.global-nav__me-photo",
+        ".global-nav__me-photo",
+        ".global-nav__primary-link-me-menu-trigger img",
+        "img[alt*='photo']",
+        ".feed-identity-module__actor-meta",          // feed sidebar
+        ".scaffold-layout__main",                     // main feed scaffold
+      ];
+
+      for (const sel of avatarSelectors) {
+        if (document.querySelector(sel)) return true;
+      }
+
+      // Fallback: if we're on /feed and the page has substantial content
+      if (url.includes("/feed") && document.body.innerText.length > 500) {
+        return true;
+      }
+
+      return false;
+    }, { timeout: 300000, polling: 2000 });
+
+    console.log("[SESSION] ✓ Login detected on URL:", page.url());
+
+    // ✅ Small delay to let cookies / storage fully stabilize
+    await page.waitForTimeout(3000);
+
+    console.log("[SESSION] Saving storage state to", AUTH_FILE);
+    await _loginContext.storageState({ path: AUTH_FILE });
+
+    // ✅ Verify file was actually written
+    if (!fs.existsSync(AUTH_FILE)) {
+      throw new Error("auth.json was not created after storageState() call");
+    }
+
+    const stats = fs.statSync(AUTH_FILE);
+    console.log(`[SESSION] ✅ auth.json saved (${stats.size} bytes)`);
+
+    setLoginState({ inProgress: false, completed: true });
+
+  } catch (err) {
+    console.error("[SESSION] ✗ Login failed:", err.message);
+    setLoginState({ inProgress: false, completed: false });
+  } finally {
+    await closeLoginSession();
+  }
 }
 
 /**
- * Returns 'pending' | 'ready' | 'failed' | 'unknown'
+ * Closes the login browser.
  */
-export function getSessionStatus(sessionId) {
-  const session = sessions.get(sessionId);
-  if (!session) {
-    // Check if we have a saved session file (from a previous run)
-    if (fs.existsSync(sessionPath(sessionId))) return 'ready';
-    return 'unknown';
+export async function closeLoginSession() {
+  if (_loginContext) {
+    await _loginContext.close().catch(() => {});
+    _loginContext = null;
+    console.log("[SESSION] ✓ Login browser closed");
   }
-  return session.status;
 }
 
 /**
- * Load a saved session from disk (for app restarts).
+ * Deletes auth.json and tears down any active scraping context.
  */
-async function _loadSession(sessionId) {
-  const filePath = sessionPath(sessionId);
-  if (!fs.existsSync(filePath)) throw new Error(`No saved session for ${sessionId}`);
+export async function clearSession() {
+  if (fs.existsSync(AUTH_FILE)) fs.unlinkSync(AUTH_FILE);
+  await _resetScrapingContext();
+  console.log("[SESSION] ✓ Session cleared");
+}
 
-  const browser = await chromium.launch({
+// ─── Scraping context ─────────────────────────────────────────────────────────
+
+async function _resetScrapingContext() {
+  await _scrapingContext?.close().catch(() => {});
+  await _browser?.close().catch(() => {});
+  _scrapingContext = null;
+  _browser = null;
+}
+
+async function _getScrapingContext() {
+  if (_scrapingContext) return _scrapingContext;
+
+  _browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    args: [
+      "--no-sandbox",
+      "--disable-application-cache",
+      "--disk-cache-size=0",
+      "--disable-dev-shm-usage",
+    ],
   });
 
-  const context = await browser.newContext({
-    storageState: filePath,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 390, height: 844 },
-    locale: 'en-US',
+  _scrapingContext = await _browser.newContext({
+    storageState: AUTH_FILE,
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   });
 
-  await _blockResources(context);
-  sessions.set(sessionId, { browser, context, status: 'ready' });
-  console.log(`[SCRAPER:_loadSession] ✓ Session loaded from disk for ${sessionId}`);
+  await _blockResources(_scrapingContext);
+  return _scrapingContext;
 }
 
-/**
- * Get or restore a ready context for a session.
- */
-async function _getContext(sessionId) {
-  let session = sessions.get(sessionId);
+// ─── Public scraping API ──────────────────────────────────────────────────────
 
-  if (!session || session.status !== 'ready') {
-    await _loadSession(sessionId);
-    session = sessions.get(sessionId);
-  }
-
-  return session.context;
-}
-
-export async function scrapeProfile(sessionId, profileUrl) {
-  console.log(`[SCRAPER:scrapeProfile] session=${sessionId} url="${profileUrl}"`);
-
-  const context = await _getContext(sessionId);
+export async function scrapeProfile(linkedinId, profileUrl) {
   const url = normalizeUrl(profileUrl);
+  console.log(`[SCRAPER] user=${linkedinId} url="${url}"`);
+
+  const context = await _getScrapingContext();
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-    // Session expired?
     const currentUrl = page.url();
-    if (currentUrl.includes('/login') || currentUrl.includes('/authwall')) {
-      // Invalidate and tell caller to re-auth
-      const session = sessions.get(sessionId);
-      if (session) session.status = 'failed';
-      const filePath = sessionPath(sessionId);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      throw new Error('SESSION_EXPIRED');
+    if (currentUrl.includes("/login") || currentUrl.includes("/authwall")) {
+      console.warn("[SESSION] ✗ Session expired — resetting scraping context");
+      await _resetScrapingContext();
+      throw new Error("SESSION_EXPIRED");
     }
 
-    await page.waitForSelector('main', { timeout: 30000 });
+    await page.waitForSelector("main", { timeout: 30000 });
 
     const basicInfo = await _extractBasicInfo(page);
     const contactInfo = await _extractContactInfo(page);
 
-    return { ...basicInfo, ...contactInfo, profileUrl: url, scrapedAt: new Date() };
+    return {
+      ...basicInfo,
+      ...contactInfo,
+      profileUrl: url,
+      scrapedAt: new Date(),
+    };
   } finally {
     await page.close();
   }
 }
 
 export function normalizeUrl(url) {
-  let normalized = url.trim().replace('://m.linkedin', '://www.linkedin');
-  if (!normalized.startsWith('http')) normalized = 'https://' + normalized;
+  let normalized = url.trim().replace("://m.linkedin", "://www.linkedin");
+  if (!normalized.startsWith("http")) normalized = "https://" + normalized;
   const parsed = new URL(normalized);
-  let pathname = parsed.pathname.split('?')[0].split('#')[0];
-  const parts = pathname.split('/').filter(Boolean);
-  if (parsed.hostname.includes('linkedin.com') && parts[0] === 'in' && parts[1]) {
+  let pathname = parsed.pathname.split("?")[0].split("#")[0];
+  const parts = pathname.split("/").filter(Boolean);
+  if (
+    parsed.hostname.includes("linkedin.com") &&
+    parts[0] === "in" &&
+    parts[1]
+  ) {
     pathname = `/in/${parts[1]}/`;
   }
   return `${parsed.origin}${pathname}`;
 }
 
-export function deleteSession(sessionId) {
-  const session = sessions.get(sessionId);
-  if (session?.browser) session.browser.close().catch(() => {});
-  sessions.delete(sessionId);
-  const filePath = sessionPath(sessionId);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  console.log(`[SCRAPER:deleteSession] Session ${sessionId} removed`);
-}
+// ─── Extraction helpers ───────────────────────────────────────────────────────
 
 async function _extractBasicInfo(page) {
   return page.evaluate(() => {
-    const getText = (sel) => document.querySelector(sel)?.innerText?.trim() || '';
-    return { name: getText('main h1') || getText('main h2') };
+    const getText = (sel) =>
+      document.querySelector(sel)?.innerText?.trim() || "";
+    return { name: getText("main h1") || getText("main h2") };
   });
 }
 
@@ -213,7 +310,7 @@ async function _extractContactInfo(page) {
   const result = { emails: [], phones: [], websites: [] };
   try {
     const contactSelectors = [
-      '#top-card-text-details-contact-info',
+      "#top-card-text-details-contact-info",
       'a[href*="overlay/contact-info"]',
       'a[href*="contact-info"]',
     ];
@@ -226,31 +323,42 @@ async function _extractContactInfo(page) {
           clicked = true;
           break;
         }
-      } catch { /* not visible */ }
+      } catch {
+        /* not visible */
+      }
     }
     if (!clicked) return result;
 
-    await page.waitForSelector('a[href^="mailto:"], div span', { timeout: 6000 });
+    await page.waitForSelector('a[href^="mailto:"]', { timeout: 4000 });
 
     const contactData = await page.evaluate(() => {
-      const emails = [], phones = [], websites = [];
-      document.querySelectorAll('div').forEach(block => {
-        const label = block.querySelector('p')?.innerText?.trim()?.toLowerCase();
+      const emails = [],
+        phones = [],
+        websites = [];
+      document.querySelectorAll("div").forEach((block) => {
+        const label = block
+          .querySelector("p")
+          ?.innerText?.trim()
+          ?.toLowerCase();
         if (!label) return;
-        if (label.includes('phone')) {
+        if (label.includes("phone")) {
           const match = block.innerText.match(/\d{10,}/);
           if (match && !phones.includes(match[0])) phones.push(match[0]);
         }
-        if (label.includes('email')) {
+        if (label.includes("email")) {
           const link = block.querySelector('a[href^="mailto:"]');
           if (link) {
-            const email = link.href.replace('mailto:', '').trim();
+            const email = link.href.replace("mailto:", "").trim();
             if (!emails.includes(email)) emails.push(email);
           }
         }
-        if (label.includes('website')) {
-          const link = block.querySelector('a[href]');
-          if (link && !link.href.includes('linkedin.com') && !websites.includes(link.href)) {
+        if (label.includes("website")) {
+          const link = block.querySelector("a[href]");
+          if (
+            link &&
+            !link.href.includes("linkedin.com") &&
+            !websites.includes(link.href)
+          ) {
             websites.push(link.href);
           }
         }
@@ -261,9 +369,13 @@ async function _extractContactInfo(page) {
     Object.assign(result, contactData);
 
     try {
-      const closeBtn = page.locator('button[aria-label="Dismiss"], button.artdeco-modal__dismiss');
+      const closeBtn = page.locator(
+        'button[aria-label="Dismiss"], button.artdeco-modal__dismiss',
+      );
       if (await closeBtn.isVisible({ timeout: 1000 })) await closeBtn.click();
-    } catch { /* no dismiss button */ }
+    } catch {
+      /* no dismiss button */
+    }
   } catch (err) {
     console.warn(`[SCRAPER:_extractContactInfo] ${err.message}`);
   }

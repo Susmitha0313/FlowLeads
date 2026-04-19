@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,16 +10,22 @@ import {
   Platform,
   Alert,
   StatusBar,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import * as Linking from 'expo-linking';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
-import { extractProfile } from '../src/services/api';
+import { useShareIntent } from 'expo-share-intent';
+import { extractProfile, logoutApi } from '../src/services/api';
 import ProfileCard, { Profile } from '../src/components/ProfileCard';
 import { saveFileFromUrl } from '../src/utils/saveFile';
+import SideDrawer from '../src/components/home/SideDrawer';
+
+const DRAWER_WIDTH = Dimensions.get('window').width * 0.72;
 
 type State = 'idle' | 'loading' | 'success' | 'error';
+
 export default function HomeScreen() {
   const [url, setUrl] = useState('');
   const baseUrl = process.env.EXPO_PUBLIC_API_URL;
@@ -30,7 +36,49 @@ export default function HomeScreen() {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // Extract a linkedin URL from any incoming string (share text or direct URL)
+  // Handle shared URLs from other apps (e.g. LinkedIn share sheet)
+  const { shareIntent, resetShareIntent } = useShareIntent();
+  useEffect(() => {
+    if (!shareIntent) return;
+    const possibleText =
+      shareIntent.text ||
+      shareIntent.webUrl;
+
+    if (possibleText) {
+      const linkedInUrl = extractLinkedInUrl(possibleText);
+      if (!linkedInUrl) {
+        Alert.alert("Invalid Share", "No LinkedIn profile found");
+      }
+      if (linkedInUrl) {
+        setUrl(linkedInUrl);
+        resetShareIntent();
+      }
+    }
+  }, [shareIntent]);
+
+  // Drawer state
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const drawerAnim = useRef(new Animated.Value(DRAWER_WIDTH)).current;
+
+  const openDrawer = () => {
+    setDrawerVisible(true);
+    Animated.timing(drawerAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start();
+  };
+
+  const closeDrawer = (cb?: () => void) => {
+    Animated.timing(drawerAnim, { toValue: DRAWER_WIDTH, duration: 200, useNativeDriver: true }).start(() => {
+      setDrawerVisible(false);
+      cb?.();
+    });
+  };
+
+  const handleLogout = () => {
+    closeDrawer(async () => {
+      try { await logoutApi(); } catch { /* best-effort */ }
+      router.replace('/login' as any);
+    });
+  };
+
   const extractLinkedInUrl = (text: string): string | null => {
     const match = text.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s]+/);
     return match ? match[0] : null;
@@ -42,12 +90,10 @@ export default function HomeScreen() {
   };
 
   useEffect(() => {
-    // App opened from a cold start via share/deep link
     Linking.getInitialURL().then((initialUrl) => {
       if (initialUrl) handleIncomingUrl(initialUrl);
     });
 
-    // App already open and receives a URL
     const sub = Linking.addEventListener('url', ({ url: incomingUrl }) => {
       handleIncomingUrl(incomingUrl);
     });
@@ -74,11 +120,6 @@ export default function HomeScreen() {
       setState('success');
     } catch (err: any) {
       const msg = err?.response?.data?.error ?? err?.message ?? 'Something went wrong';
-      if (msg === 'SESSION_EXPIRED') {
-        await AsyncStorage.removeItem('sessionId');
-        router.replace('/login' as any);
-        return;
-      }
       setErrorMsg(msg);
       setState('error');
     }
@@ -100,7 +141,6 @@ export default function HomeScreen() {
         jobTitle: profile.designation ?? '',
         company: profile.company ?? '',
         phoneNumbers: (profile.phones ?? []).map((p) => ({
-          // number: p.startsWith('+') ? p : `+${p}`,
           number: p,
           label: 'mobile',
         })),
@@ -118,10 +158,8 @@ export default function HomeScreen() {
       };
 
       if (Platform.OS === 'ios') {
-        // iOS: opens native contact form pre-filled
         await Contacts.presentFormAsync(undefined, contact, { isNew: true });
       } else {
-        // Android: request permission then open native contacts form via Intent
         const { status } = await Contacts.requestPermissionsAsync();
         if (status !== 'granted') {
           Alert.alert('Permission denied', 'Contacts permission is required to save.');
@@ -164,12 +202,20 @@ export default function HomeScreen() {
           <Text className="text-white text-2xl font-bold tracking-tight">Bobi</Text>
           <Text className="text-blue-200 text-sm mt-0.5">LinkedIn Profile Scraper</Text>
         </View>
-        <TouchableOpacity
-          onPress={() => router.push('/profiles')}
-          className="bg-white/20 rounded-xl px-4 py-2"
-        >
-          <Text className="text-white text-sm font-medium">📋 Saved</Text>
-        </TouchableOpacity>
+        <View className="flex-row items-center gap-x-2">
+          <TouchableOpacity
+            onPress={() => router.push('/profiles')}
+            className="bg-white/20 rounded-xl px-4 py-2"
+          >
+            <Text className="text-white text-sm font-medium">📋 Saved</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={openDrawer}
+            className="bg-white/20 rounded-xl w-9 h-9 items-center justify-center"
+          >
+            <Text className="text-white text-base font-bold">☰</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -207,9 +253,7 @@ export default function HomeScreen() {
           <TouchableOpacity
             onPress={handleExtract}
             disabled={state === 'loading' || !url.trim()}
-            className={`mt-4 rounded-2xl py-3.5 items-center justify-center ${state === 'loading' || !url.trim()
-              ? 'bg-blue-300'
-              : 'bg-[#0A66C2]'
+            className={`mt-4 rounded-2xl py-3.5 items-center justify-center ${state === 'loading' || !url.trim() ? 'bg-blue-300' : 'bg-[#0A66C2]'
               }`}
           >
             {state === 'loading' ? (
@@ -238,7 +282,7 @@ export default function HomeScreen() {
         {state === 'loading' && (
           <View className="mx-4 mt-4 bg-blue-50 border border-blue-100 rounded-2xl p-4">
             <Text className="text-blue-600 text-sm text-center">
-              🤖 Logging in & scraping LinkedIn... this may take a few seconds
+              🤖 Scraping LinkedIn profile... this may take a few seconds
             </Text>
           </View>
         )}
@@ -266,6 +310,15 @@ export default function HomeScreen() {
           </View>
         )}
       </ScrollView>
+
+      <SideDrawer
+        visible={drawerVisible}
+        drawerAnim={drawerAnim}
+        drawerWidth={DRAWER_WIDTH}
+        onClose={() => closeDrawer()}
+        onCloseWithCallback={(cb) => closeDrawer(cb)}
+        onLogout={handleLogout}
+      />
     </KeyboardAvoidingView>
   );
 }
