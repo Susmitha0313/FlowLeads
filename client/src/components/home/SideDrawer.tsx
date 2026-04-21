@@ -57,13 +57,13 @@ export default function SideDrawer({ visible, drawerAnim, drawerWidth, onClose, 
                 label="Saved Profiles"
                 onPress={() => onCloseWithCallback(() => router.push('/profiles'))}
               />
-              <View className="mx-6 my-2 border-t border-gray-100" />
+              {/* <View className="mx-6 my-2 border-t border-gray-100" />
               <DrawerItem
                 icon="🚪"
                 label="Logout"
                 labelClass="text-red-500"
                 onPress={onLogout}
-              />
+              /> */}
             </View>
           </Animated.View>
         </Pressable>

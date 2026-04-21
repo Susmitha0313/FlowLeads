@@ -68,11 +68,16 @@ export default function ProfileCard({
           </Text>
         ) : null}
         {profile.company ? (
-          <Text className="text-sm text-gray-500 mt-0.5">@ {profile.company}</Text>
+          <Text className="text-sm text-gray-500 mt-0.5">🏢 {profile.company}</Text>
         ) : null}
-        {/* {profile.location ? (
+        {profile.location ? (
           <Text className="text-xs text-gray-400 mt-1">📍 {profile.location}</Text>
-        ) : null} */}
+        ) : null}
+        {profile.headline ? (
+          <Text className="text-xs text-gray-400 mt-1 text-center italic" numberOfLines={2}>
+            {profile.headline}
+          </Text>
+        ) : null}
       </View>
 
       {/* Divider */}
@@ -80,6 +85,9 @@ export default function ProfileCard({
 
       {/* Contact details */}
       <View className="px-5 gap-y-2 pb-2">
+        {profile.location ? (
+          <Row icon="📍" label={profile.location} />
+        ) : null}
         {(profile.emails ?? []).map((e) => (
           <Row key={e} icon="✉️" label={e} onPress={() => Linking.openURL(`mailto:${e}`)} />
         ))}

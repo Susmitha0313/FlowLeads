@@ -266,6 +266,10 @@ export async function scrapeProfile(linkedinId, profileUrl) {
 
     await page.waitForSelector("main", { timeout: 30000 });
 
+    // // Scroll down to trigger lazy-loading of Experience section
+    // await page.evaluate(() => window.scrollTo(0, 600));
+    // await page.waitForTimeout(1500);
+
     const basicInfo = await _extractBasicInfo(page);
     const contactInfo = await _extractContactInfo(page);
 
@@ -300,9 +304,105 @@ export function normalizeUrl(url) {
 
 async function _extractBasicInfo(page) {
   return page.evaluate(() => {
-    const getText = (sel) =>
-      document.querySelector(sel)?.innerText?.trim() || "";
-    return { name: getText("main h1") || getText("main h2") };
+    const getText = (el) => el?.innerText?.trim() || "";
+
+    // ── Name ──────────────────────────────────────────────────────────────────
+    const nameEl =
+      document.querySelector("main h1") ||
+      document.querySelector("main h2");
+    const name = getText(nameEl);
+
+    // ── Location ──────────────────────────────────────────────────────────────
+    // The location <p> is always the sibling just before the "Contact info" <p>:
+    //   <div class="flex">
+    //     <p> Ernakulam, Kerala, India </p>   ← location
+    //     <p> · </p>
+    //     <p> <a href="...contact-info/">Contact info</a> </p>
+    //   </div>
+    let location = "";
+    const contactAnchor = document.querySelector('a[href*="contact-info"]');
+    if (contactAnchor) {
+      const contactP = contactAnchor.closest("p");
+      if (contactP) {
+        let sibling = contactP.previousElementSibling;
+        while (sibling) {
+          const text = sibling.innerText?.trim();
+          if (text && text !== "·" && text !== "•") {
+            location = text;
+            break;
+          }
+          sibling = sibling.previousElementSibling;
+        }
+      }
+    }
+
+    // // ── Company & Designation from Experience section ─────────────────────────
+    // // Structure:
+    // //   <h2> Experience </h2>
+    // //   ...
+    // //   <ul>
+    // //     <li>                          ← first job entry
+    // //       ...
+    // //       <p> Software Engineer </p>  ← designation (bold/larger p)
+    // //       <p> Datamate Info... </p>   ← company name
+    // //       <p> Full-time </p>
+    // //       <p> Jun 2025 - Present </p>
+    // //     </li>
+    // //   </ul>
+    // let company = "";
+    // let designation = "";
+
+    // // Find the <h2> whose text is "Experience"
+    // const expHeading = Array.from(document.querySelectorAll("main h2")).find(
+    //   (el) => el.innerText?.trim() === "Experience"
+    // );
+
+    // if (expHeading) {
+    //   // Walk forward from the Experience heading to find the first <ul>
+    //   let cursor = expHeading.parentElement;
+    //   // Go up until we find a container that has a <ul> sibling
+    //   while (cursor) {
+    //     const parent = cursor.parentElement;
+    //     if (!parent) break;
+    //     const siblings = Array.from(parent.children);
+    //     const idx = siblings.indexOf(cursor);
+    //     const afterCursor = siblings.slice(idx + 1);
+    //     const ul = afterCursor.find((el) => el.tagName === "UL") ||
+    //                cursor.querySelector("ul");
+    //     if (ul) {
+    //       const firstLi = ul.querySelector("li");
+    //       if (firstLi) {
+    //         // Collect all <p> text inside the first <li>, filter out empty/dates/duration
+    //         const allP = Array.from(firstLi.querySelectorAll("p"))
+    //           .map((p) => p.innerText?.trim())
+    //           .filter(
+    //             (t) =>
+    //               t &&
+    //               t.length > 1 &&
+    //               !/^\d/.test(t) &&           // skip dates like "Jun 2025..."
+    //               !/\byr\b|\bmos\b/i.test(t) && // skip "1 yr 2 mos"
+    //               !/^(full.time|part.time|contract|freelance|internship|hybrid|remote|on.site)$/i.test(t)
+    //           );
+    //         // First <p> = designation, second <p> = company
+    //         designation = allP[0] || "";
+    //         company = allP[1] || "";
+    //       }
+    //       break;
+    //     }
+    //     cursor = parent;
+    //   }
+    // }
+
+    // ── Profile image ─────────────────────────────────────────────────────────
+    const imgEl =
+      document.querySelector("img.pv-top-card-profile-picture__image--show") ||
+      document.querySelector(".pv-top-card__photo img") ||
+      document.querySelector("main img.evi-image");
+    const profileImageUrl = imgEl?.src || "";
+
+    return { name, location, profileImageUrl };
+    // return { name, location, company, designation, profileImageUrl };
+
   });
 }
 

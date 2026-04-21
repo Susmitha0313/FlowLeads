@@ -1,0 +1,13 @@
+node_modules/
+client/node_modules/
+backend/node_modules/
+client/.expo/
+client/dist/
+client/web-build/
+client/android/
+client/ios/
+client/app-example/
+*.log
+client/.env
+client/.env.local
+backend/.env

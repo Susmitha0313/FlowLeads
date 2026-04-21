@@ -154,7 +154,7 @@ export default function HomeScreen() {
             : []),
           ...(profile.websites ?? []).map((w) => ({ url: w, label: 'work' })),
         ],
-        note: profile.headline ?? '',
+        note: [profile.headline, profile.location].filter(Boolean).join(' · '),
       };
 
       if (Platform.OS === 'ios') {
