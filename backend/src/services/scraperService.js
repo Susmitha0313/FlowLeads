@@ -10,6 +10,16 @@ const __dirname = path.dirname(__filename);
 const USER_DATA_DIR = path.join(__dirname, "..", "user-data");
 const AUTH_FILE = path.join(__dirname, "..", "auth.json");
 
+// ─── Bootstrap auth.json from env var (for Docker/Render deployments) ────────
+if (!fs.existsSync(AUTH_FILE) && process.env.AUTH_JSON) {
+  try {
+    fs.writeFileSync(AUTH_FILE, process.env.AUTH_JSON, "utf8");
+    console.log("[SESSION] ✓ auth.json restored from AUTH_JSON env var");
+  } catch (err) {
+    console.error("[SESSION] ✗ Failed to write auth.json from env:", err.message);
+  }
+}
+
 const BLOCKED_TYPES = new Set(["image", "font", "media", "ping"]);
 const BLOCKED_DOMAINS = [
   "analytics",
@@ -113,7 +123,7 @@ export async function startLoginSession() {
   setLoginState({ inProgress: true, completed: false });
 
   _loginContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
-    headless: true,
+    headless: false,
     args: ["--start-maximized"],
     viewport: null,
   });

@@ -13,7 +13,9 @@
       "infoPlist": {
         "CFBundleURLTypes": [
           {
-            "CFBundleURLSchemes": ["bobi"]
+            "CFBundleURLSchemes": [
+              "bobi"
+            ]
           }
         ]
       }
@@ -46,7 +48,9 @@
             "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
             "NSExtensionActivationSupportsWebPageWithMaxCount": 1
           },
-          "androidIntentFilters": ["text/plain"]
+          "androidIntentFilters": [
+            "text/plain"
+          ]
         }
       ],
       [
@@ -70,9 +74,9 @@
       "apiUrl": "https://flowleads.onrender.com/api",
       "router": {},
       "eas": {
-        "projectId": "d80627d4-4773-4dc5-8460-a98c7b1e40ef"
+        "projectId": "0b8e5107-8e87-49b8-90e0-ee8eb8a41aeb"
       }
     },
-    "owner": "susdev.com"
+    "owner": "sus2ndev"
   }
 }
