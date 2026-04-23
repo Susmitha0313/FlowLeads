@@ -80,7 +80,7 @@ export async function hasValidSession() {
     await page.goto("https://www.linkedin.com/feed", {
       waitUntil: "domcontentloaded",
       timeout: 15000,
-    }).catch(() => {});
+    }).catch(() => { });
     // ✅ Check for login indicators (multiple selectors for resilience)
     const loggedIn = await page.evaluate(() => {
       const url = window.location.href;
@@ -109,7 +109,7 @@ export async function hasValidSession() {
     console.warn(`[SESSION] ✗ Session check failed — ${err.message}`);
     return false;
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    if (browser) await browser.close().catch(() => { });
   }
 }
 
@@ -208,7 +208,7 @@ export async function startLoginSession() {
  */
 export async function closeLoginSession() {
   if (_loginContext) {
-    await _loginContext.close().catch(() => {});
+    await _loginContext.close().catch(() => { });
     _loginContext = null;
     console.log("[SESSION] ✓ Login browser closed");
   }
@@ -226,8 +226,8 @@ export async function clearSession() {
 // ─── Scraping context ─────────────────────────────────────────────────────────
 
 async function _resetScrapingContext() {
-  await _scrapingContext?.close().catch(() => {});
-  await _browser?.close().catch(() => {});
+  await _scrapingContext?.close().catch(() => { });
+  await _browser?.close().catch(() => { });
   _scrapingContext = null;
   _browser = null;
 }
@@ -255,45 +255,6 @@ async function _getScrapingContext() {
   return _scrapingContext;
 }
 
-// ─── Public scraping API ──────────────────────────────────────────────────────
-
-export async function scrapeProfile(linkedinId, profileUrl) {
-  const url = normalizeUrl(profileUrl);
-  console.log(`[SCRAPER] user=${linkedinId} url="${url}"`);
-
-  const context = await _getScrapingContext();
-  const page = await context.newPage();
-
-  try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-
-    const currentUrl = page.url();
-    if (currentUrl.includes("/login") || currentUrl.includes("/authwall")) {
-      console.warn("[SESSION] ✗ Session expired — resetting scraping context");
-      await _resetScrapingContext();
-      throw new Error("SESSION_EXPIRED");
-    }
-
-    await page.waitForSelector("main", { timeout: 30000 });
-
-    // // Scroll down to trigger lazy-loading of Experience section
-    // await page.evaluate(() => window.scrollTo(0, 600));
-    // await page.waitForTimeout(1500);
-
-    const basicInfo = await _extractBasicInfo(page);
-    const contactInfo = await _extractContactInfo(page);
-
-    return {
-      ...basicInfo,
-      ...contactInfo,
-      profileUrl: url,
-      scrapedAt: new Date(),
-    };
-  } finally {
-    await page.close();
-  }
-}
-
 export function normalizeUrl(url) {
   let normalized = url.trim().replace("://m.linkedin", "://www.linkedin");
   if (!normalized.startsWith("http")) normalized = "https://" + normalized;
@@ -313,7 +274,10 @@ export function normalizeUrl(url) {
 // ─── Extraction helpers ───────────────────────────────────────────────────────
 
 async function _extractBasicInfo(page) {
+  console.log("[_extractBasicInfo] ▶ Starting extraction");
+
   return page.evaluate(() => {
+    const log = (...args) => console.log("[_extractBasicInfo:evaluate]", ...args);
     const getText = (el) => el?.innerText?.trim() || "";
 
     // ── Name ──────────────────────────────────────────────────────────────────
@@ -321,173 +285,262 @@ async function _extractBasicInfo(page) {
       document.querySelector("main h1") ||
       document.querySelector("main h2");
     const name = getText(nameEl);
+    log("Name element found:", !!nameEl, "| Name:", name);
 
     // ── Location ──────────────────────────────────────────────────────────────
-    // The location <p> is always the sibling just before the "Contact info" <p>:
-    //   <div class="flex">
-    //     <p> Ernakulam, Kerala, India </p>   ← location
-    //     <p> · </p>
-    //     <p> <a href="...contact-info/">Contact info</a> </p>
-    //   </div>
+    // let location = "";
+    // const contactAnchor = document.querySelector('a[href*="contact-info"]');
+    // log("Contact anchor found:", !!contactAnchor);
+
+    // if (contactAnchor) {
+    //   const contactP = contactAnchor.closest("p");
+    //   log("Contact <p> found:", !!contactP);
+
+    //   if (contactP) {
+    //     let sibling = contactP.previousElementSibling;
+    //     while (sibling) {
+    //       const text = sibling.innerText?.trim();
+    //       log("Checking sibling text:", text);
+
+    //       if (text && text !== "·" && text !== "•") {
+    //         location = text;
+    //         break;
+    //       }
+    //       sibling = sibling.previousElementSibling;
+    //     }
+    //   }
+    // }
+
+    // log("Final extracted location:", location);
+    // ── Location ──────────────────────────────────────────────────────────────
     let location = "";
-    const contactAnchor = document.querySelector('a[href*="contact-info"]');
-    if (contactAnchor) {
-      const contactP = contactAnchor.closest("p");
-      if (contactP) {
-        let sibling = contactP.previousElementSibling;
-        while (sibling) {
-          const text = sibling.innerText?.trim();
-          if (text && text !== "·" && text !== "•") {
-            location = text;
-            break;
-          }
-          sibling = sibling.previousElementSibling;
-        }
+
+    // Grab all visible <p> tags in top section and find a likely location
+    const possiblePs = Array.from(document.querySelectorAll("main p"));
+
+    for (const p of possiblePs) {
+      const text = p.innerText?.trim();
+
+      // heuristic: location usually has comma + no "Contact info"
+      if (
+        text &&
+        text.includes(",") &&
+        !text.toLowerCase().includes("contact") &&
+        !text.includes("·") &&
+        text.length < 100
+      ) {
+        location = text;
+        break;
       }
     }
 
-    // // ── Company & Designation from Experience section ─────────────────────────
-    // // Structure:
-    // //   <h2> Experience </h2>
-    // //   ...
-    // //   <ul>
-    // //     <li>                          ← first job entry
-    // //       ...
-    // //       <p> Software Engineer </p>  ← designation (bold/larger p)
-    // //       <p> Datamate Info... </p>   ← company name
-    // //       <p> Full-time </p>
-    // //       <p> Jun 2025 - Present </p>
-    // //     </li>
-    // //   </ul>
-    // let company = "";
-    // let designation = "";
-
-    // // Find the <h2> whose text is "Experience"
-    // const expHeading = Array.from(document.querySelectorAll("main h2")).find(
-    //   (el) => el.innerText?.trim() === "Experience"
-    // );
-
-    // if (expHeading) {
-    //   // Walk forward from the Experience heading to find the first <ul>
-    //   let cursor = expHeading.parentElement;
-    //   // Go up until we find a container that has a <ul> sibling
-    //   while (cursor) {
-    //     const parent = cursor.parentElement;
-    //     if (!parent) break;
-    //     const siblings = Array.from(parent.children);
-    //     const idx = siblings.indexOf(cursor);
-    //     const afterCursor = siblings.slice(idx + 1);
-    //     const ul = afterCursor.find((el) => el.tagName === "UL") ||
-    //                cursor.querySelector("ul");
-    //     if (ul) {
-    //       const firstLi = ul.querySelector("li");
-    //       if (firstLi) {
-    //         // Collect all <p> text inside the first <li>, filter out empty/dates/duration
-    //         const allP = Array.from(firstLi.querySelectorAll("p"))
-    //           .map((p) => p.innerText?.trim())
-    //           .filter(
-    //             (t) =>
-    //               t &&
-    //               t.length > 1 &&
-    //               !/^\d/.test(t) &&           // skip dates like "Jun 2025..."
-    //               !/\byr\b|\bmos\b/i.test(t) && // skip "1 yr 2 mos"
-    //               !/^(full.time|part.time|contract|freelance|internship|hybrid|remote|on.site)$/i.test(t)
-    //           );
-    //         // First <p> = designation, second <p> = company
-    //         designation = allP[0] || "";
-    //         company = allP[1] || "";
-    //       }
-    //       break;
-    //     }
-    //     cursor = parent;
-    //   }
-    // }
+    log("Final extracted location:", location);
 
     // ── Profile image ─────────────────────────────────────────────────────────
     const imgEl =
       document.querySelector("img.pv-top-card-profile-picture__image--show") ||
       document.querySelector(".pv-top-card__photo img") ||
       document.querySelector("main img.evi-image");
+
     const profileImageUrl = imgEl?.src || "";
+    log("Profile image found:", !!imgEl, "| URL:", profileImageUrl);
 
     return { name, location, profileImageUrl };
-    // return { name, location, company, designation, profileImageUrl };
-
   });
 }
 
+
 async function _extractContactInfo(page) {
+  console.log("[_extractContactInfo] ▶ Starting extraction");
+
   const result = { emails: [], phones: [], websites: [] };
+
+  // ── Step 1: Click the "Contact info" link ──────────────────────────────────
+  let clicked = false;
   try {
-    const contactSelectors = [
-      "#top-card-text-details-contact-info",
-      'a[href*="overlay/contact-info"]',
-      'a[href*="contact-info"]',
-    ];
-    let clicked = false;
-    for (const sel of contactSelectors) {
-      try {
-        const link = page.locator(sel).first();
-        if (await link.isVisible({ timeout: 2000 })) {
-          await link.click();
-          clicked = true;
-          break;
-        }
-      } catch {
-        /* not visible */
-      }
-    }
-    if (!clicked) return result;
+    const link = page.getByRole("link", { name: /contact info/i }).first();
+    await link.waitFor({ state: "visible", timeout: 5000 });
+    await link.click({ force: true });
+    clicked = true;
+    console.log("[_extractContactInfo] Step 1: ✓ Clicked.");
+  } catch (err) {
+    console.warn("[_extractContactInfo] Step 1: ✗ Could not click Contact info link:", err.message);
+  }
 
-    await page.waitForSelector('a[href^="mailto:"]', { timeout: 4000 });
+  if (!clicked) {
+    console.warn("[_extractContactInfo] ⚠ Skipping contact extraction — link not found.");
+    return result;
+  }
 
-    const contactData = await page.evaluate(() => {
-      const emails = [],
-        phones = [],
-        websites = [];
-      document.querySelectorAll("div").forEach((block) => {
-        const label = block
-          .querySelector("p")
-          ?.innerText?.trim()
-          ?.toLowerCase();
-        if (!label) return;
-        if (label.includes("phone")) {
-          const match = block.innerText.match(/\d{10,}/);
-          if (match && !phones.includes(match[0])) phones.push(match[0]);
+  // ── Step 2: Wait for the modal to appear ──────────────────────────────────
+  try {
+    await page.waitForSelector(
+      '.artdeco-modal__content, .pv-contact-info, [data-view-name="profile-card-contact-info"]',
+      { timeout: 8000 }
+    );
+  } catch (err) {
+    console.warn("[_extractContactInfo] Step 2: ✗ Modal wait timed out:", err.message, "— waiting 3s fallback...");
+    await page.waitForTimeout(3000);
+  }
+
+  // Dump modal HTML for debugging
+  try {
+    const modalHtml = await page.evaluate(() => {
+      const el =
+        document.querySelector(".artdeco-modal__content") ||
+        document.querySelector(".pv-contact-info");
+      return el ? el.innerHTML.substring(0, 3000) : "(modal not found in DOM)";
+    });
+  } catch (err) {
+    console.warn("[_extractContactInfo] Could not dump modal HTML:", err.message);
+  }
+
+  // ── Step 3: Extract emails ─────────────────────────────────────────────────
+  try {
+    console.log("[_extractContactInfo] Step 3: Extracting emails...");
+    const emails = await page.evaluate(() => {
+      const found = [];
+      document.querySelectorAll('a[href^="mailto:"]').forEach((a) => {
+        const email = a.href.replace("mailto:", "").split("?")[0].trim();
+        if (email && !found.includes(email)) found.push(email);
+      });
+      // fallback: look for <p> labelled "email" and grab sibling text
+      document.querySelectorAll("p").forEach((p) => {
+        if (p.innerText?.trim().toLowerCase() !== "email") return;
+        const parent = p.parentElement;
+        const link = parent?.querySelector('a[href^="mailto:"]');
+        if (link) {
+          const email = link.href.replace("mailto:", "").split("?")[0].trim();
+          if (email && !found.includes(email)) found.push(email);
         }
-        if (label.includes("email")) {
-          const link = block.querySelector('a[href^="mailto:"]');
-          if (link) {
-            const email = link.href.replace("mailto:", "").trim();
-            if (!emails.includes(email)) emails.push(email);
-          }
-        }
-        if (label.includes("website")) {
-          const link = block.querySelector("a[href]");
-          if (
-            link &&
-            !link.href.includes("linkedin.com") &&
-            !websites.includes(link.href)
-          ) {
-            websites.push(link.href);
+      });
+      return found;
+    });
+    console.log("[_extractContactInfo] Step 3: emails →", emails);
+    result.emails = emails;
+  } catch (err) {
+    console.warn("[_extractContactInfo] Step 3: ✗ Email extraction failed:", err.message);
+  }
+
+  // ── Step 4: Extract phones ─────────────────────────────────────────────────
+  try {
+    console.log("[_extractContactInfo] Step 4: Extracting phones...");
+    const phones = await page.evaluate(() => {
+      const found = [];
+      document.querySelectorAll("p").forEach((p) => {
+        if (p.innerText?.trim().toLowerCase() !== "phone") return;
+        const parent = p.parentElement;
+        if (!parent) return;
+        // phone value is usually in a sibling <p> or <span>
+        const siblings = Array.from(parent.querySelectorAll("p, span"));
+        for (const el of siblings) {
+          const text = el.innerText?.trim();
+          const match = text?.match(/[\d\s\-()+]{7,}/);
+          if (match) {
+            const digits = match[0].replace(/\D/g, "");
+            if (digits.length >= 7 && !found.includes(digits)) {
+              found.push(digits);
+            }
           }
         }
       });
-      return { emails, phones, websites };
+      return found;
     });
+    console.log("[_extractContactInfo] Step 4: phones →", phones);
+    result.phones = phones;
+  } catch (err) {
+    console.warn("[_extractContactInfo] Step 4: ✗ Phone extraction failed:", err.message);
+  }
 
-    Object.assign(result, contactData);
+  // ── Step 5: Extract websites ───────────────────────────────────────────────
+  try {
+    console.log("[_extractContactInfo] Step 5: Extracting websites...");
+    const websites = await page.evaluate(() => {
+      const found = [];
+      document.querySelectorAll("p").forEach((p) => {
+        if (!p.innerText?.trim().toLowerCase().includes("website")) return;
+        const parent = p.parentElement;
+        const link = parent?.querySelector("a[href]");
+        if (link && !link.href.includes("linkedin.com") && !found.includes(link.href)) {
+          found.push(link.href);
+        }
+      });
+      return found;
+    });
+    console.log("[_extractContactInfo] Step 5: websites →", websites);
+    result.websites = websites;
+  } catch (err) {
+    console.warn("[_extractContactInfo] Step 5: ✗ Website extraction failed:", err.message);
+  }
 
-    try {
-      const closeBtn = page.locator(
-        'button[aria-label="Dismiss"], button.artdeco-modal__dismiss',
-      );
-      if (await closeBtn.isVisible({ timeout: 1000 })) await closeBtn.click();
-    } catch {
-      /* no dismiss button */
+  // ── Step 6: Dismiss modal ──────────────────────────────────────────────────
+  try {
+    console.log("[_extractContactInfo] Step 6: Dismissing modal...");
+    const closeBtn = page.locator('button[aria-label="Dismiss"], button.artdeco-modal__dismiss');
+    if (await closeBtn.isVisible({ timeout: 2000 })) {
+      await closeBtn.click();
+      console.log("[_extractContactInfo] Step 6: ✓ Modal dismissed.");
+    } else {
+      console.log("[_extractContactInfo] Step 6: No dismiss button visible.");
     }
   } catch (err) {
-    console.warn(`[SCRAPER:_extractContactInfo] ${err.message}`);
+    console.warn("[_extractContactInfo] Step 6: ✗ Dismiss failed:", err.message);
   }
+
+  console.log("[_extractContactInfo] ✓ Done. Result:", JSON.stringify(result));
   return result;
+}
+
+
+// ─── Public scraping API ──────────────────────────────────────────────────────
+
+export async function scrapeProfile(linkedinId, profileUrl) {
+  const url = normalizeUrl(profileUrl);
+  console.log(`[SCRAPER] ▶ Start | user=${linkedinId} | url="${url}"`);
+
+  const context = await _getScrapingContext();
+  console.log("[SCRAPER] Context acquired");
+
+  const page = await context.newPage();
+  console.log("[SCRAPER] New page created");
+
+  try {
+    console.log("[SCRAPER] Navigating to profile...");
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+    const currentUrl = page.url();
+    console.log("[SCRAPER] Current URL:", currentUrl);
+
+    if (currentUrl.includes("/login") || currentUrl.includes("/authwall")) {
+      console.warn("[SESSION] ✗ Session expired — resetting scraping context");
+      await _resetScrapingContext();
+      throw new Error("SESSION_EXPIRED");
+    }
+
+    console.log("[SCRAPER] Waiting for main content...");
+    await page.waitForSelector("main", { timeout: 30000 });
+
+    console.log("[SCRAPER] Extracting basic info...");
+    const basicInfo = await _extractBasicInfo(page);
+
+    console.log("[SCRAPER] Extracting contact info...");
+    const contactInfo = await _extractContactInfo(page);
+
+    const finalData = {
+      ...basicInfo,
+      ...contactInfo,
+      profileUrl: url,
+      scrapedAt: new Date(),
+    };
+
+    console.log("[SCRAPER] ✅ Extraction complete:", finalData);
+
+    return finalData;
+  } catch (err) {
+    console.error("[SCRAPER] ❌ Failed:", err.message);
+    throw err;
+  } finally {
+    console.log("[SCRAPER] Closing page");
+    await page.close();
+  }
 }

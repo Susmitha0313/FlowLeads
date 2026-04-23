@@ -119,7 +119,9 @@ export default function HomeScreen() {
       setProfile(res.data.profile);
       setState('success');
     } catch (err: any) {
-      const msg = err?.response?.data?.error ?? err?.message ?? 'Something went wrong';
+      const msg = err?.response?.data?.error === 'SCRAPE_TIMEOUT'
+        ? 'Scraping took too long — the server is busy. Try again in a moment.'
+        : err?.response?.data?.error ?? err?.message ?? 'Something went wrong';
       setErrorMsg(msg);
       setState('error');
     }

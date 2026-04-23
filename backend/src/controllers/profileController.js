@@ -9,23 +9,38 @@ export const extractProfile = async (req, res) => {
 
   if (!url) return res.status(400).json({ error: 'URL required' });
 
+  // Abort and respond before Render's 30s hard limit
+  const TIMEOUT_MS = 25000;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    console.warn('[CTRL:extractProfile] ✗ Timed out after 25s');
+    if (!res.headersSent) res.status(504).json({ error: 'SCRAPE_TIMEOUT' });
+  }, TIMEOUT_MS);
+
   try {
     const normalizedUrl = scraperService.normalizeUrl(url);
     if (!normalizedUrl.includes('linkedin.com/in/')) {
+      clearTimeout(timer);
       return res.status(400).json({ error: 'Invalid LinkedIn profile URL' });
     }
 
     const data = await scraperService.scrapeProfile('shared', normalizedUrl);
-    console.log(`[CTRL:extractProfile] ✓ Scraped "${data.name}"`);
+    if (timedOut) return; // response already sent
+    console.log(`[CTRL:extractProfile] ✓ Scraped "${data.name}" — data:`, JSON.stringify(data));
 
     const profile = await Profile.findOneAndUpdate(
       { profileUrl: normalizedUrl },
       { ...data, profileUrl: normalizedUrl },
       { new: true, upsert: true }
     );
+    if (timedOut) return;
     console.log(`[CTRL:extractProfile] ✓ Saved — id=${profile._id}`);
+    clearTimeout(timer);
     res.json({ profile, cached: false });
   } catch (err) {
+    clearTimeout(timer);
+    if (timedOut) return;
     if (err.message === 'SESSION_EXPIRED') {
       console.warn('[CTRL:extractProfile] ✗ Session expired');
       return res.status(401).json({ error: 'SESSION_EXPIRED' });
