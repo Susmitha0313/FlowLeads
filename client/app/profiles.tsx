@@ -98,6 +98,7 @@ export default function ProfilesScreen() {
         designation: editState.designation,
         company: editState.company,
         location: editState.location,
+        profileUrl: editState.profileUrl,
         emails: splitCSV(editState.emailsRaw),
         phones: splitCSV(editState.phonesRaw),
         websites: splitCSV(editState.websitesRaw),
@@ -249,6 +250,7 @@ export default function ProfilesScreen() {
             {field('Company', 'company')}
             {field('Headline', 'headline')}
             {field('Location', 'location')}
+            {field('Profile URL', 'profileUrl')}
             {field('Emails (comma separated)', 'emailsRaw')}
             {field('Phones (comma separated)', 'phonesRaw')}
             {field('Websites (comma separated)', 'websitesRaw')}

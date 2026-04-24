@@ -163,6 +163,8 @@ export async function startLoginSession() {
         "img[alt*='photo']",
         ".feed-identity-module__actor-meta",          // feed sidebar
         ".scaffold-layout__main",                     // main feed scaffold
+        ".global-nav__content",                       // top nav bar
+        "nav.global-nav",
       ];
 
       for (const sel of avatarSelectors) {
@@ -179,10 +181,13 @@ export async function startLoginSession() {
 
     console.log("[SESSION] ✓ Login detected on URL:", page.url());
 
-    // ✅ Small delay to let cookies / storage fully stabilize
-    await page.waitForTimeout(3000);
+    // ✅ Wait for network to go idle so all auth cookies are fully written
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => { });
 
-    console.log("[SESSION] Saving storage state to", AUTH_FILE);
+    // Extra buffer for LinkedIn's post-auth cookie writes (device approval needs more time)
+    await page.waitForTimeout(5000);
+
+    console.log("[SESSION] Saving storage state to", AUTH_FILE, "| current URL:", page.url());
     await _loginContext.storageState({ path: AUTH_FILE });
 
     // ✅ Verify file was actually written

@@ -10,13 +10,13 @@ export const extractProfile = async (req, res) => {
   if (!url) return res.status(400).json({ error: 'URL required' });
 
   // Abort and respond before Render's 30s hard limit
-  const TIMEOUT_MS = 25000;
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    console.warn('[CTRL:extractProfile] ✗ Timed out after 25s');
-    if (!res.headersSent) res.status(504).json({ error: 'SCRAPE_TIMEOUT' });
-  }, TIMEOUT_MS);
+  // const TIMEOUT_MS = 25000;
+  // let timedOut = false;
+  // const timer = setTimeout(() => {
+  //   timedOut = true;
+  //   console.warn('[CTRL:extractProfile] ✗ Timed out after 25s');
+  //   if (!res.headersSent) res.status(504).json({ error: 'SCRAPE_TIMEOUT' });
+  // }, TIMEOUT_MS);
 
   try {
     const normalizedUrl = scraperService.normalizeUrl(url);
@@ -26,7 +26,7 @@ export const extractProfile = async (req, res) => {
     }
 
     const data = await scraperService.scrapeProfile('shared', normalizedUrl);
-    if (timedOut) return; // response already sent
+    // if (timedOut) return; // response already sent
     console.log(`[CTRL:extractProfile] ✓ Scraped "${data.name}" — data:`, JSON.stringify(data));
 
     const profile = await Profile.findOneAndUpdate(
@@ -34,13 +34,13 @@ export const extractProfile = async (req, res) => {
       { ...data, profileUrl: normalizedUrl },
       { new: true, upsert: true }
     );
-    if (timedOut) return;
+    // if (timedOut) return;
     console.log(`[CTRL:extractProfile] ✓ Saved — id=${profile._id}`);
-    clearTimeout(timer);
+    // clearTimeout(timer);
     res.json({ profile, cached: false });
   } catch (err) {
-    clearTimeout(timer);
-    if (timedOut) return;
+    // clearTimeout(timer);
+    // if (timedOut) return;
     if (err.message === 'SESSION_EXPIRED') {
       console.warn('[CTRL:extractProfile] ✗ Session expired');
       return res.status(401).json({ error: 'SESSION_EXPIRED' });
@@ -54,9 +54,9 @@ export const extractProfile = async (req, res) => {
 };
 
 export const getProfiles = async (req, res) => {
-  const page   = Math.max(1, parseInt(req.query.page)  || 1);
-  const limit  = Math.min(50, parseInt(req.query.limit) || 20);
-  const skip   = (page - 1) * limit;
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(50, parseInt(req.query.limit) || 20);
+  const skip = (page - 1) * limit;
   const search = req.query.search?.trim() || '';
 
   console.log(`[CTRL:getProfiles] page=${page} limit=${limit} search="${search}"`);
@@ -96,7 +96,7 @@ export const deleteProfile = async (req, res) => {
 };
 
 export const updateProfile = async (req, res) => {
-  const allowed = ['name','headline','designation','company','industry','location','connections','emails','phones','websites','notes','tags'];
+  const allowed = ['name', 'headline', 'designation', 'company', 'industry', 'location', 'connections', 'emails', 'phones', 'websites', 'notes', 'tags'];
   const updates = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
 
   try {

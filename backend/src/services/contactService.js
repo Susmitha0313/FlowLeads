@@ -85,6 +85,13 @@ export function generateVCF(profile) {
     lines.push(`TEL;TYPE=CELL:+${digits}`);
   });
 
+  if (profile.location) {
+    // ADR format: PO Box; Extended; Street; City; State; ZIP; Country
+    // We only have a free-text location so put it in the street field
+    const loc = profile.location.replace(/[;,]/g, ' ').trim();
+    lines.push(`ADR;TYPE=WORK:;;${loc};;;;`);
+  }
+
   if (profile.profileUrl) lines.push(`URL:${profile.profileUrl}`);
 
   lines.push('END:VCARD');
