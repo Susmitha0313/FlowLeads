@@ -123,7 +123,7 @@ export async function startLoginSession() {
   setLoginState({ inProgress: true, completed: false });
 
   _loginContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
-    headless: false,
+    headless: true,
     args: ["--start-maximized"],
     viewport: null,
   });
